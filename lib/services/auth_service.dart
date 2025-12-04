@@ -1,47 +1,88 @@
 import 'dart:convert';
+import 'dart:io';
+import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
 import '../models/user.dart';
 import 'api_service.dart';
 import '../app/constants.dart';
-import 'package:http/http.dart' as http;
 
 class AuthService {
+  static const _authTokenKey = 'auth_token';
+  static const _userDataKey = 'user_data';
+  static const _userIdKey = 'id';
+
   final ApiService _apiService = ApiService();
-  final _secureStorage = const FlutterSecureStorage();
+  final FlutterSecureStorage _secureStorage = const FlutterSecureStorage();
+  final DeviceInfoPlugin _deviceInfo = DeviceInfoPlugin();
 
-  /// Login user and save token + user locally
-  Future<User?> login(String email, String password) async {
-    final response = await http.post(
-      Uri.parse('${AppConstants.apiBaseUrl}/auth/login'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'email': email, 'password': password}),
-    );
-
-    if (response.statusCode == 200) {
-      final Map<String, dynamic> data = jsonDecode(response.body);
-
-      if (data['success'] == true && data['user'] != null) {
-        final token = data['token'];
-        final user = User.fromJson(data['user']);
-
-        // CORRECTED: Get ID from user object, not root level
-        final id = user.id; // This is the correct way
-
-        // Save token and user locally
-        await _secureStorage.write(key: 'auth_token', value: token);
-        await _secureStorage.write(key: 'id', value: id);
-        await _secureStorage.write(key: 'user_data', value: jsonEncode(data['user']));
-
-        return user;
-      } else {
-        throw Exception(data['message'] ?? 'Login failed');
+  /// Get unique device ID
+  Future<String> _getDeviceId() async {
+    try {
+      if (Platform.isAndroid) {
+        final androidInfo = await _deviceInfo.androidInfo;
+        return androidInfo.id ?? androidInfo.serialNumber ?? 'unknown';
+      } else if (Platform.isIOS) {
+        final iosInfo = await _deviceInfo.iosInfo;
+        return iosInfo.identifierForVendor ?? 'unknown';
       }
-    } else {
-      throw Exception('Failed to login. Status code: ${response.statusCode}');
+    } catch (e) {
+      print('Device ID fetch error: $e');
     }
+    return 'unknown';
   }
 
-  /// Register user
+  /// Login user
+  Future<User?> login(String email, String password) async {
+    print('📱 Starting login for email: $email');
+
+    final deviceId = await _getDeviceId();
+    print('🔑 Device ID: $deviceId');
+
+    final url = Uri.parse('${AppConstants.apiBaseUrl}/auth/login');
+    print('🌐 Login URL: $url');
+
+    final response = await http.post(
+      url,
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'email': email,
+        'password': password,
+        'deviceId': deviceId,
+      }),
+    );
+
+    print('📩 Response status: ${response.statusCode}');
+    print('📄 Response body: ${response.body}');
+
+    if (response.statusCode != 200) {
+      throw Exception(
+        'Failed to login. Status code: ${response.statusCode}, body: ${response.body}',
+      );
+    }
+
+    final data = jsonDecode(response.body);
+    print('📝 Parsed JSON data: $data');
+
+    if (data['success'] != true || data['user'] == null) {
+      throw Exception(data['message'] ?? 'Login failed');
+    }
+
+    final token = data['token'];
+    print('🔐 Token received: $token');
+
+    final user = User.fromJson(data['user']);
+    print('👤 User parsed: ${user.toJson()}');
+
+    await _storeAuthData(token, user, data['user']);
+    print('💾 Auth data stored successfully');
+
+    return user;
+  }
+
+
+  /// Register new user
   Future<bool> register(String name, String email, String password) async {
     try {
       final response = await _apiService.post('/auth/register', {
@@ -49,7 +90,6 @@ class AuthService {
         'email': email,
         'password': password,
       });
-
       return response['success'];
     } catch (e) {
       print('Register error: $e');
@@ -57,64 +97,143 @@ class AuthService {
     }
   }
 
-  /// Fetch current user from API using token
-  Future<User?> fetchMe() async {
-    final token = await getToken(); // Get token from secure storage
+  /// Upload profile picture
+  Future<Map<String, dynamic>> uploadProfilePicture(File imageFile) async {
+    final token = await getToken();
+    if (token == null) throw Exception('No auth token found. Please login.');
 
-    if (token == null) {
-      throw Exception('No auth token found. Please login.');
-    }
+    final url = Uri.parse('${AppConstants.apiBaseUrl}/auth/profile-picture');
 
-    final response = await http.get(
-      Uri.parse('${AppConstants.apiBaseUrl}/auth/me'),
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer $token', // Pass token in Authorization header
-      },
+    final fileExtension = imageFile.path.split('.').last.toLowerCase();
+    String mimeType = 'image/jpeg';
+    if (fileExtension == 'png') mimeType = 'image/png';
+    if (fileExtension == 'gif') mimeType = 'image/gif';
+    if (fileExtension == 'webp') mimeType = 'image/webp';
+
+    final request = http.MultipartRequest('PUT', url)
+      ..headers['Authorization'] = 'Bearer $token'
+      ..files.add(await http.MultipartFile.fromPath(
+        'file',
+        imageFile.path,
+        contentType: MediaType.parse(mimeType),
+      ));
+
+    final response = await request.send();
+    final body = await response.stream.bytesToString();
+
+    if (response.statusCode != 200) throw Exception('Upload failed: $body');
+
+    return jsonDecode(body);
+  }
+
+  /// Send forgot password request
+  Future<bool> forgotPassword(String email) async {
+    final url = Uri.parse('${AppConstants.apiBaseUrl}/auth/forgot-password');
+
+    final response = await http.post(
+      url,
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'email': email}),
     );
 
-    if (response.statusCode == 200) {
-      final Map<String, dynamic> data = jsonDecode(response.body);
+    final data = jsonDecode(response.body);
 
-      if (data['success'] == true && data['user'] != null) {
-        return User.fromJson(data['user']);
-      } else {
-        throw Exception(data['message'] ?? 'Failed to fetch user');
-      }
+    if (response.statusCode == 200 && data['success'] == true) {
+      return true;
     } else {
-      throw Exception('Failed to fetch user. Status code: ${response.statusCode}');
+      throw Exception(data['message'] ?? 'Failed to send reset link');
     }
   }
 
+  /// Fetch current user
+  Future<User?> fetchMe() async {
+    final token = await getToken();
+    if (token == null) throw Exception('No auth token found. Please login.');
 
-  /// Logout user
-  Future<void> logout() async {
-    await _secureStorage.delete(key: 'auth_token');
-    await _secureStorage.delete(key: 'user_data');
+    final url = Uri.parse('${AppConstants.apiBaseUrl}/auth/me');
+    final response = await http.get(url, headers: _buildHeaders(token));
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to fetch user. Status code: ${response.statusCode}');
+    }
+
+    final data = jsonDecode(response.body);
+    if (data['success'] != true || data['user'] == null) {
+      throw Exception(data['message'] ?? 'Failed to fetch user');
+    }
+
+    return User.fromJson(data['user']);
   }
 
-  /// Check if user is logged in
+  /// Check verification
+  Future<Map<String, dynamic>?> checkVerification() async {
+    final token = await getToken();
+    if (token == null) return null;
+
+    final response = await http.get(
+      Uri.parse('${AppConstants.apiBaseUrl}/auth/check-verification'),
+      headers: _buildHeaders(token),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to check verification: ${response.statusCode}');
+    }
+
+    return json.decode(response.body);
+  }
+
+  /// Logout
+  Future<void> logout() async {
+    final token = await getToken();
+    if (token != null) {
+      try {
+        await http.post(
+          Uri.parse('${AppConstants.apiBaseUrl}/auth/logout'),
+          headers: _buildHeaders(token),
+        );
+      } catch (e) {
+        print('Logout API failed: $e');
+      }
+    }
+    await _clearAuthData();
+  }
+
+  /// Storage & utility methods
   Future<bool> isLoggedIn() async {
-    final token = await _secureStorage.read(key: 'auth_token');
-    return token != null;
+    final token = await getToken();
+    return token != null && token.isNotEmpty;
   }
 
   Future<String?> getUserRole() async {
-    final userData = await _secureStorage.read(key: 'user_data');
+    final userData = await _secureStorage.read(key: _userDataKey);
     if (userData == null) return null;
-
     final userMap = jsonDecode(userData);
-    return userMap['role']; // Assuming your user JSON has a "role" field
+    return userMap['role'];
   }
 
   Future<User?> getCurrentUser() async {
-    final userData = await _secureStorage.read(key: 'user_data');
-    if (userData == null) return null;
-    return User.fromJson(jsonDecode(userData));
+    final userData = await _secureStorage.read(key: _userDataKey);
+    return userData != null ? User.fromJson(jsonDecode(userData)) : null;
   }
 
-  /// Fetch auth token
   Future<String?> getToken() async {
-    return await _secureStorage.read(key: 'auth_token');
+    return await _secureStorage.read(key: _authTokenKey);
+  }
+
+  Map<String, String> _buildHeaders(String token) => {
+    'Content-Type': 'application/json',
+    'Authorization': 'Bearer $token',
+  };
+
+  Future<void> _storeAuthData(String token, User user, Map<String, dynamic> userJson) async {
+    await _secureStorage.write(key: _authTokenKey, value: token);
+    await _secureStorage.write(key: _userIdKey, value: user.id);
+    await _secureStorage.write(key: _userDataKey, value: jsonEncode(userJson));
+  }
+
+  Future<void> _clearAuthData() async {
+    await _secureStorage.delete(key: _authTokenKey);
+    await _secureStorage.delete(key: _userDataKey);
+    await _secureStorage.delete(key: _userIdKey);
   }
 }

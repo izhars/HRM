@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:skeletonizer/skeletonizer.dart';
 import '../services/PollService.dart';
 import 'PollResultsScreen.dart';
 
@@ -120,27 +121,96 @@ class _PollScreenState extends State<PollScreen>
           child: Divider(height: 1, color: Color(0xFFE0E0E0)),
         ),
       ),
-      body: _loading ? _buildLoadingState() : _buildContent(),
+      body: _loading ? _buildSkeletonLoading() : _buildContent(),
     );
   }
 
-  Widget _buildLoadingState() {
-    return const Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          CircularProgressIndicator(
-            valueColor: AlwaysStoppedAnimation<Color>(Colors.indigo),
-          ),
-          SizedBox(height: 16),
-          Text(
-            'Loading polls...',
-            style: TextStyle(
-              fontSize: 16,
-              color: Colors.grey,
-            ),
+  Widget _buildSkeletonLoading() {
+    return Skeletonizer(
+      enabled: true,
+      child: ListView.separated(
+        padding: const EdgeInsets.all(16),
+        itemCount: 3, // Show 3 skeleton items
+        separatorBuilder: (context, index) => const SizedBox(height: 16),
+        itemBuilder: (context, index) => _buildSkeletonPollCard(),
+      ),
+    );
+  }
+
+  Widget _buildSkeletonPollCard() {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.08),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
           ),
         ],
+      ),
+      child: const Padding(
+        padding: EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Header skeleton
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                CircleAvatar(
+                  radius: 14,
+                  backgroundColor: Colors.grey,
+                ),
+                SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'This is a skeleton question that will be replaced',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      SizedBox(height: 4),
+                      Text(
+                        'Expires: 2d left',
+                        style: TextStyle(
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            SizedBox(height: 16),
+            // Options skeleton
+            Column(
+              children: [
+                _SkeletonOption(),
+                SizedBox(height: 12),
+                _SkeletonOption(),
+                SizedBox(height: 12),
+                _SkeletonOption(),
+              ],
+            ),
+            SizedBox(height: 16),
+            // Footer skeleton
+            Row(
+              children: [
+                Icon(Icons.how_to_vote, size: 16),
+                SizedBox(width: 6),
+                Text('0 votes'),
+                Spacer(),
+                Text('Active'),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -198,7 +268,6 @@ class _PollScreenState extends State<PollScreen>
     );
   }
 
-  // Add this method to your existing PollScreen class
   Widget _buildPollCard(Map<String, dynamic> poll) {
     final options = poll['options'] as List<dynamic>;
     final hasVoted = poll['hasVoted'] == true;
@@ -237,7 +306,6 @@ class _PollScreenState extends State<PollScreen>
     );
   }
 
-// Add this new method to your existing PollScreen class
   Widget _buildResultsButton(Map<String, dynamic> poll) {
     return SizedBox(
       width: double.infinity,
@@ -266,7 +334,6 @@ class _PollScreenState extends State<PollScreen>
       ),
     );
   }
-
 
   Widget _buildPollHeader(Map<String, dynamic> poll) {
     return Row(
@@ -490,5 +557,42 @@ class _PollScreenState extends State<PollScreen>
     } catch (e) {
       return 'Invalid date';
     }
+  }
+}
+
+// Skeleton option widget for the loading state
+class _SkeletonOption extends StatelessWidget {
+  const _SkeletonOption();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: Colors.grey[300]!,
+          width: 1.5,
+        ),
+      ),
+      child: const Padding(
+        padding: EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        child: Row(
+          children: [
+            CircleAvatar(radius: 3),
+            SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'This is a skeleton option text',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }

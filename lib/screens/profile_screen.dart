@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import '../services/avatar_api.dart';
 import '../models/user.dart';
 import 'package:intl/intl.dart';
@@ -17,10 +18,12 @@ class _ProfileScreenState extends State<ProfileScreen>
   File? _avatar;
   User? _user;
   bool _isLoading = true;
+  bool _isUploading = false;
   late AnimationController _fadeController;
   late AnimationController _slideController;
 
   final AuthService _authService = AuthService();
+  final ImagePicker _imagePicker = ImagePicker();
 
   // Modern color palette
   static const Color primaryColor = Color(0xFF6366F1);
@@ -31,6 +34,7 @@ class _ProfileScreenState extends State<ProfileScreen>
   static const Color textSecondary = Color(0xFF64748B);
   static const Color accentColor = Color(0xFF10B981);
   static const Color dividerColor = Color(0xFFE2E8F0);
+  static const Color errorColor = Color(0xFFEF4444);
 
   @override
   void initState() {
@@ -43,7 +47,7 @@ class _ProfileScreenState extends State<ProfileScreen>
       duration: const Duration(milliseconds: 1000),
       vsync: this,
     );
-    loadProfile();
+    _loadProfile();
   }
 
   @override
@@ -53,7 +57,7 @@ class _ProfileScreenState extends State<ProfileScreen>
     super.dispose();
   }
 
-  Future<void> loadProfile() async {
+  Future<void> _loadProfile() async {
     try {
       // Load avatar and user data
       final results = await Future.wait([
@@ -79,6 +83,218 @@ class _ProfileScreenState extends State<ProfileScreen>
     }
   }
 
+  Future<void> _uploadProfilePicture(File imageFile) async {
+    // Check file size before uploading (5MB limit)
+    final fileSize = await imageFile.length();
+    const maxSize = 5 * 1024 * 1024; // 5MB
+
+    if (fileSize > maxSize) {
+      _showErrorSnackBar('Image size too large. Please select image under 5MB');
+      return;
+    }
+
+    setState(() => _isUploading = true);
+
+    try {
+      final result = await _authService.uploadProfilePicture(imageFile);
+
+      if (result != null && result['success'] == true) {
+        setState(() {
+          _avatar = imageFile;
+          if (result['user'] != null) {
+            _user = User.fromJson(result['user']);
+          }
+        });
+
+        _showSuccessSnackBar('Profile picture updated successfully!');
+      } else {
+        throw Exception(result?['message'] ?? 'Upload failed');
+      }
+    } catch (e) {
+      debugPrint('Upload error: $e');
+
+      if (e.toString().contains('Invalid file type') ||
+          e.toString().contains('Only image files')) {
+        _showErrorSnackBar('Please select a valid image file (JPEG, PNG, GIF)');
+      } else if (e.toString().contains('file size')) {
+        _showErrorSnackBar('Image size too large. Please select image under 5MB');
+      } else {
+        _showErrorSnackBar('Failed to upload profile picture. Please try again.');
+      }
+    } finally {
+      setState(() => _isUploading = false);
+    }
+  }
+
+  Future<void> _pickImageFromGallery() async {
+    try {
+      final XFile? image = await _imagePicker.pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 800,
+        maxHeight: 800,
+        imageQuality: 85,
+      );
+
+      if (image != null) {
+        await _uploadProfilePicture(File(image.path));
+      }
+    } catch (e) {
+      debugPrint('Gallery pick error: $e');
+      _showErrorSnackBar('Failed to pick image from gallery');
+    }
+  }
+
+  Future<void> _takePhotoWithCamera() async {
+    try {
+      final XFile? image = await _imagePicker.pickImage(
+        source: ImageSource.camera,
+        maxWidth: 800,
+        maxHeight: 800,
+        imageQuality: 85,
+      );
+
+      if (image != null) {
+        await _uploadProfilePicture(File(image.path));
+      }
+    } catch (e) {
+      debugPrint('Camera error: $e');
+      _showErrorSnackBar('Failed to take photo');
+    }
+  }
+
+  void _showImageSourceDialog() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        decoration: BoxDecoration(
+          color: cardBackground,
+          borderRadius: const BorderRadius.only(
+            topLeft: Radius.circular(20),
+            topRight: Radius.circular(20),
+          ),
+        ),
+        child: SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Padding(
+                padding: EdgeInsets.all(16),
+                child: Text(
+                  'Update Profile Picture',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: textPrimary,
+                  ),
+                ),
+              ),
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 16),
+                child: Text(
+                  'Supported formats: JPEG, PNG, GIF\nMax size: 5MB',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: textSecondary,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              _buildBottomSheetOption(
+                icon: Icons.photo_library,
+                title: 'Choose from Gallery',
+                subtitle: 'Select an existing photo',
+                onTap: () {
+                  Navigator.pop(context);
+                  _pickImageFromGallery();
+                },
+              ),
+              _buildBottomSheetOption(
+                icon: Icons.camera_alt,
+                title: 'Take Photo',
+                subtitle: 'Use your camera',
+                onTap: () {
+                  Navigator.pop(context);
+                  _takePhotoWithCamera();
+                },
+              ),
+              const SizedBox(height: 8),
+              Container(
+                margin: const EdgeInsets.all(16),
+                child: ElevatedButton(
+                  onPressed: () => Navigator.pop(context),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: dividerColor,
+                    foregroundColor: textPrimary,
+                    minimumSize: const Size(double.infinity, 50),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: const Text('Cancel'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBottomSheetOption({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required VoidCallback onTap,
+  }) {
+    return ListTile(
+      leading: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: primaryColor.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Icon(icon, color: primaryColor),
+      ),
+      title: Text(
+        title,
+        style: const TextStyle(
+          fontWeight: FontWeight.w600,
+          color: textPrimary,
+        ),
+      ),
+      subtitle: Text(
+        subtitle,
+        style: const TextStyle(
+          color: textSecondary,
+          fontSize: 12,
+        ),
+      ),
+      onTap: onTap,
+    );
+  }
+
+  void _showSuccessSnackBar(String message) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.check_circle, color: Colors.white),
+              const SizedBox(width: 8),
+              Expanded(child: Text(message)),
+            ],
+          ),
+          backgroundColor: accentColor,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          margin: const EdgeInsets.all(16),
+        ),
+      );
+    }
+  }
+
   void _showErrorSnackBar(String message) {
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -90,7 +306,7 @@ class _ProfileScreenState extends State<ProfileScreen>
               Expanded(child: Text(message)),
             ],
           ),
-          backgroundColor: Colors.red[600],
+          backgroundColor: errorColor,
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
           margin: const EdgeInsets.all(16),
@@ -160,100 +376,78 @@ class _ProfileScreenState extends State<ProfileScreen>
 
   Widget _buildProfileContent() {
     if (_user == null) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              Icons.error_outline,
-              size: 64,
-              color: Colors.red[400],
-            ),
-            const SizedBox(height: 16),
-            const Text(
-              'Failed to load profile',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w600,
-                color: textPrimary,
-              ),
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              'Please check your connection and try again',
-              style: TextStyle(
-                color: textSecondary,
-                fontSize: 14,
-              ),
-            ),
-            const SizedBox(height: 24),
-            ElevatedButton.icon(
-              onPressed: () {
-                setState(() => _isLoading = true);
-                loadProfile();
-              },
-              icon: const Icon(Icons.refresh),
-              label: const Text('Retry'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: primaryColor,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
+      return _buildErrorState();
+    }
+
+    return Stack(
+      children: [
+        CustomScrollView(
+          slivers: [
+            _buildSliverAppBar(),
+            SliverToBoxAdapter(
+              child: FadeTransition(
+                opacity: _fadeController,
+                child: Padding(
+                  padding: const EdgeInsets.all(8),
+                  child: Column(
+                    children: _buildProfileCards(),
+                  ),
                 ),
               ),
             ),
           ],
         ),
-      );
-    }
+        if (_isUploading) _buildUploadOverlay(),
+      ],
+    );
+  }
 
-    return CustomScrollView(
-      slivers: [
-        _buildSliverAppBar(),
-        SliverToBoxAdapter(
-          child: FadeTransition(
-            opacity: _fadeController,
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                children: [
-                  _buildPersonalInfoCard(),
-                  const SizedBox(height: 16),
-                  if (_user!.address != null) ...[
-                    _buildAddressCard(),
-                    const SizedBox(height: 16),
-                  ],
-                  _buildEmploymentCard(),
-                  const SizedBox(height: 16),
-                  if (_user!.salary != null) ...[
-                    _buildSalaryCard(),
-                    const SizedBox(height: 16),
-                  ],
-                  if (_user!.bankDetails != null) ...[
-                    _buildBankDetailsCard(),
-                    const SizedBox(height: 16),
-                  ],
-                  if (_user!.leaveBalance != null) ...[
-                    _buildLeaveBalanceCard(),
-                    const SizedBox(height: 16),
-                  ],
-                  if (_user!.emergencyContact != null) ...[
-                    _buildEmergencyContactCard(),
-                    const SizedBox(height: 16),
-                  ],
-                  if (_user!.spouseDetails != null) ...[
-                    _buildSpouseDetailsCard(),
-                    const SizedBox(height: 16),
-                  ],
-                  _buildAccountInfoCard(),
-                  const SizedBox(height: 32),
-                ],
+  Widget _buildErrorState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            Icons.error_outline,
+            size: 64,
+            color: Colors.red[400],
+          ),
+          const SizedBox(height: 16),
+          const Text(
+            'Failed to load profile',
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w600,
+              color: textPrimary,
+            ),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Please check your connection and try again',
+            style: TextStyle(
+              color: textSecondary,
+              fontSize: 14,
+            ),
+          ),
+          const SizedBox(height: 24),
+          ElevatedButton.icon(
+            onPressed: () {
+              setState(() => _isLoading = true);
+              _loadProfile();
+            },
+            icon: const Icon(Icons.refresh),
+            label: const Text('Retry'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: primaryColor,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
               ),
             ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -321,80 +515,105 @@ class _ProfileScreenState extends State<ProfileScreen>
       actions: [
         IconButton(
           icon: const Icon(Icons.logout_rounded),
-          onPressed: () async {
-            final confirmed = await showDialog<bool>(
-              context: context,
-              builder: (context) => AlertDialog(
-                title: const Text('Logout'),
-                content: const Text('Are you sure you want to logout?'),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(context, false),
-                    child: const Text('Cancel'),
-                  ),
-                  TextButton(
-                    onPressed: () => Navigator.pop(context, true),
-                    child: const Text('Logout'),
-                  ),
-                ],
-              ),
-            );
-
-            if (confirmed ?? false) {
-              await AuthService().logout();
-              // Use pushNamedAndRemoveUntil to clear the stack and navigate to login
-              Navigator.pushNamedAndRemoveUntil(
-                context,
-                '/login',
-                    (Route<dynamic> route) => false, // Removes all previous routes
-              );
-            }
-          },
+          onPressed: _handleLogout,
         ),
       ],
     );
   }
 
   Widget _buildProfileAvatar() {
-    return Hero(
-      tag: 'profile_avatar',
-      child: Container(
-        padding: const EdgeInsets.all(4),
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: Colors.white,
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.2),
-              blurRadius: 16,
-              offset: const Offset(0, 8),
+    return GestureDetector(
+      onTap: _showImageSourceDialog,
+      child: Hero(
+        tag: 'profile_avatar',
+        child: Stack(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(4),
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.white,
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.2),
+                    blurRadius: 16,
+                    offset: const Offset(0, 8),
+                  ),
+                ],
+              ),
+              child: CircleAvatar(
+                radius: 50,
+                backgroundImage: _getProfileImage(),
+                child: _getProfileImage() == null
+                    ? Text(
+                  _user!.fullName.isNotEmpty ? _user!.fullName[0].toUpperCase() : 'U',
+                  style: const TextStyle(
+                    fontSize: 32,
+                    fontWeight: FontWeight.bold,
+                    color: primaryColor,
+                  ),
+                )
+                    : null,
+              ),
+            ),
+            Positioned(
+              bottom: 4,
+              right: 4,
+              child: Container(
+                padding: const EdgeInsets.all(6),
+                decoration: BoxDecoration(
+                  color: primaryColor,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.white, width: 2),
+                ),
+                child: const Icon(
+                  Icons.camera_alt,
+                  color: Colors.white,
+                  size: 16,
+                ),
+              ),
             ),
           ],
         ),
-        child: CircleAvatar(
-          radius: 50,
-          backgroundImage: _getProfileImage(),
-          child: _getProfileImage() == null
-              ? Text(
-            _user!.fullName.isNotEmpty ? _user!.fullName[0].toUpperCase() : 'U',
-            style: const TextStyle(
-              fontSize: 32,
-              fontWeight: FontWeight.bold,
-              color: primaryColor,
+      ),
+    );
+  }
+
+  Widget _buildUploadOverlay() {
+    return Container(
+      color: Colors.black.withOpacity(0.5),
+      child: const Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            CircularProgressIndicator(
+              valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
             ),
-          )
-              : null,
+            SizedBox(height: 16),
+            Text(
+              'Uploading...',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
         ),
       ),
     );
   }
 
   ImageProvider? _getProfileImage() {
-    if (_avatar != null) {
-      return FileImage(_avatar!);
-    } else if (_user!.profilePicture.isNotEmpty) {
+    // First, check if profilePicture from API is not empty
+    if (_user!.profilePicture.isNotEmpty) {
       return NetworkImage(_user!.profilePicture);
     }
+    // If profilePicture is empty, use the local avatar file
+    else if (_avatar != null) {
+      return FileImage(_avatar!);
+    }
+    // If neither is available, return null to show the initial
     return null;
   }
 
@@ -428,6 +647,40 @@ class _ProfileScreenState extends State<ProfileScreen>
     );
   }
 
+  List<Widget> _buildProfileCards() {
+    return [
+      _buildPersonalInfoCard(),
+      const SizedBox(height: 16),
+      if (_user!.address != null) ...[
+        _buildAddressCard(),
+        const SizedBox(height: 16),
+      ],
+      _buildEmploymentCard(),
+      const SizedBox(height: 16),
+      if (_user!.salary != null) ...[
+        _buildSalaryCard(),
+        const SizedBox(height: 16),
+      ],
+      if (_user!.bankDetails != null) ...[
+        _buildBankDetailsCard(),
+        const SizedBox(height: 16),
+      ],
+      if (_user!.leaveBalance != null) ...[
+        _buildLeaveBalanceCard(),
+        const SizedBox(height: 16),
+      ],
+      if (_user!.emergencyContact != null) ...[
+        _buildEmergencyContactCard(),
+        const SizedBox(height: 16),
+      ],
+      if (_user!.spouseDetails != null) ...[
+        _buildSpouseDetailsCard(),
+        const SizedBox(height: 16),
+      ],
+      _buildAccountInfoCard(),
+      const SizedBox(height: 32),
+    ];
+  }
   Widget _buildPersonalInfoCard() {
     return _buildCard(
       title: 'Personal Information',
@@ -641,5 +894,33 @@ class _ProfileScreenState extends State<ProfileScreen>
       ),
     );
   }
-}
 
+  Future<void> _handleLogout() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Logout'),
+        content: const Text('Are you sure you want to logout?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Logout'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed ?? false) {
+      await _authService.logout();
+      Navigator.pushNamedAndRemoveUntil(
+        context,
+        '/login',
+            (Route<dynamic> route) => false,
+      );
+    }
+  }
+}

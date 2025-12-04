@@ -304,7 +304,6 @@ class _UpcomingFestivalsState extends State<UpcomingFestivals>
         ListView.builder(
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
-          // padding: const EdgeInsets.symmetric(horizontal: 16),
           itemCount: holidays.length,
           itemBuilder: (context, index) {
             final holiday = holidays[index];
@@ -335,7 +334,7 @@ class _UpcomingFestivalsState extends State<UpcomingFestivals>
         );
       },
       child: Container(
-        margin: const EdgeInsets.only(bottom: 16),
+        margin: const EdgeInsets.only(top: 10),
         decoration: BoxDecoration(
           color: cardBackground,
           borderRadius: BorderRadius.circular(20),

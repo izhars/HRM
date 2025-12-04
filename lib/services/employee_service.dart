@@ -1,30 +1,11 @@
-import 'dart:convert';
-import 'package:http/http.dart' as http;
-import '../app/constants.dart';
-import 'auth_service.dart';
+import 'network_service.dart';
 
 class EmployeeService {
-  final String baseUrl = AppConstants.apiBaseUrl;
-  final AuthService _authService = AuthService();
+  final NetworkService _network = NetworkService();
 
+  /// Get all HRs
   Future<List<Map<String, dynamic>>> getAllHRs() async {
-    final token = await _authService.getToken();
-    final url = Uri.parse('$baseUrl/employees/hr');
-
-    final response = await http.get(
-      url,
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer $token',
-      },
-    );
-
-    if (response.statusCode == 200) {
-      final data = jsonDecode(response.body);
-      final hrs = List<Map<String, dynamic>>.from(data['hrs']);
-      return hrs;
-    } else {
-      throw Exception('Failed to load HR list');
-    }
+    final data = await _network.get("/employees/hr");
+    return List<Map<String, dynamic>>.from(data['hrs'] ?? []);
   }
 }

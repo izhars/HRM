@@ -246,10 +246,20 @@ class _CelebrationWidgetState extends State<CelebrationWidget> {
 
   @override
   Widget build(BuildContext context) {
-    return Card(
+    return Container(
       margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-      elevation: 4,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(20),
+        gradient: LinearGradient(
+          colors: [Colors.white, Colors.deepOrange.shade50],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        border: Border.all(
+          color: Colors.deepOrange.shade200, // stroke color
+          width: 1, // stroke width
+        ),
+      ),
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -271,7 +281,6 @@ class _CelebrationWidgetState extends State<CelebrationWidget> {
     );
   }
 
-  
 
   Widget _buildHeader() {
     return Padding(
@@ -282,17 +291,28 @@ class _CelebrationWidgetState extends State<CelebrationWidget> {
           Row(
             children: [
               Container(
-                padding: const EdgeInsets.all(10),
+                padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    colors: [Color(0xFF6366F1), Color(0xFFEC4899)],
+                  gradient: LinearGradient(
+                    colors: [Colors.deepOrange.shade200, Colors.deepOrange.shade100],
                   ),
                   borderRadius: BorderRadius.circular(12),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.deepOrange.shade100,
+                      blurRadius: 8,
+                      offset: Offset(0, 4),
+                    ),
+                  ],
                 ),
-                child: const Icon(Icons.celebration, color: Colors.white, size: 24),
+                child: Icon(
+                  Icons.celebration,
+                  color: Colors.deepOrange.shade600,
+                  size: 24,
+                ),
               ),
               const SizedBox(width: 12),
-              const Column(
+              Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
@@ -300,14 +320,7 @@ class _CelebrationWidgetState extends State<CelebrationWidget> {
                     style: TextStyle(
                       fontSize: 22,
                       fontWeight: FontWeight.bold,
-                      color: Colors.black87,
-                    ),
-                  ),
-                  Text(
-                    'Today & Upcoming',
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: Colors.black54,
+                      color: Colors.deepOrange.shade600, // changed color to orange
                     ),
                   ),
                 ],
@@ -317,7 +330,6 @@ class _CelebrationWidgetState extends State<CelebrationWidget> {
           if (widget.showViewAllButton)
             TextButton(
               onPressed: widget.onViewAllPressed ?? () {
-                print("View All pressed"); // debug
                 Navigator.push(
                   context,
                   MaterialPageRoute(

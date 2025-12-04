@@ -1,60 +1,118 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:latlong2/latlong.dart';
-import 'package:staffsync/component/test.dart';
+import 'package:skeletonizer/skeletonizer.dart';
+import 'package:staffsync/screens/Sidebar.dart';
 import 'package:staffsync/screens/announcement.dart';
-import 'package:staffsync/screens/chat_connection_screen.dart';
+import 'package:staffsync/screens/combo_off_screen.dart';
 import 'package:staffsync/screens/payroll_screen.dart';
+import '../../app/AppScreen.dart';
+import '../../component/AnnouncementsHomeWidget.dart';
+import '../../component/AppInfo.dart';
+import '../../component/BouncyFeatureCard.dart';
 import '../../component/celebration_ui.dart' hide CelebrationScreen;
+import '../../component/enhanced_attendance_card.dart';
 import '../../component/top_bar.dart';
 import '../../component/upcoming_festivals.dart';
 import '../../core/geocoding_service.dart';
 import '../../core/location_service.dart';
+import '../../models/user.dart';
 import '../../services/attendance_api.dart';
+import '../../services/auth_service.dart';
+import '../../services/avatar_api.dart';
 import '../../utils/device_info.dart';
 import '../../widgets/day_time_widget.dart';
 import '../FeedbackScreen.dart';
 import '../PollScreen.dart';
 import '../SupportScreen.dart';
+import '../award_screen.dart';
 import '../celebration_screen.dart';
 import '../leave_screen.dart';
 import '../holiday_screen.dart';
 import '../report_screen.dart';
-import '../task_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
+  const DashboardScreen({super.key});
+
   @override
   _DashboardScreenState createState() => _DashboardScreenState();
 }
 
 class _DashboardScreenState extends State<DashboardScreen>
-    with TickerProviderStateMixin {
+    with SingleTickerProviderStateMixin {
+  // Location & Address
   LatLng? _currentLatLng;
   String _address = "Loading location...";
-  bool _isLoading = false;
+  String? _deviceLocation;
+  File? _currentAvatar;
+  bool _loadingAddress = false;
+  User? _currentUser;
+  String? token;
+  // Loading States
+  bool _isInitialLoading = true;
+  bool _isAttendanceLoading = false;
+
+  // Attendance State
   bool _isCheckedIn = false;
   bool _isCheckedOut = false;
   String? _checkInTime;
   String? _checkOutTime;
-  double? _currentWorkHours; // Change to double to handle decimal hours
+  double? _currentWorkHours;
   String? _statusMessage;
   double? _latenessMinutes;
+
+  // Device & App Info
   String? _currentDate;
-  String? _deviceLocation;
+  String? _deviceModel;
+  String? _deviceOS;
+  Map<String, String>? _info;
+
+  // Animation
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
   late Animation<double> _slideAnimation;
+
+  // Services
   final LocationService _locationService = LocationService();
   final GeocodingService _geocodingService = GeocodingService();
   final AttendanceService _attendanceService = AttendanceService();
 
-  String? _deviceModel;
-  String? _deviceOS;
-
   @override
   void initState() {
     super.initState();
+    _loadData();
+    _initAnimations();
+    _initializeData();
+    _loadToken();
+  }
+
+  Future<void> _loadToken() async {
+    final authService = AuthService();
+    final fetchedToken = await authService.getToken(); // fetch token
+    // ✅ Print in console
+    print('Fetched Token: $fetchedToken');
+    setState(() {
+      token = fetchedToken;
+    });
+  }
+
+  Future<void> _loadData() async {
+    setState(() => _loadingAddress = true);
+    final user = await AuthService().getCurrentUser(); // fetch user from storage
+    final avatar = await AvatarService.getAvatar();
+    if (mounted) {
+      setState(() {
+        _currentUser = user;
+        _currentAvatar = avatar;
+        _loadingAddress = false;
+      });
+    }
+  }
+
+  void _initAnimations() {
     _animationController = AnimationController(
-      duration: Duration(milliseconds: 1200),
+      duration: const Duration(milliseconds: 1200),
       vsync: this,
     );
     _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
@@ -64,9 +122,22 @@ class _DashboardScreenState extends State<DashboardScreen>
       CurvedAnimation(parent: _animationController, curve: Curves.easeOutCubic),
     );
     _animationController.forward();
-    _initDeviceInfo();
-    _getLocationAndAddress();
+  }
+
+  Future<void> _initializeData() async {
     _setCurrentDate();
+    await Future.wait([
+      _loadAppInfo(),
+      _initDeviceInfo(),
+      _getLocationAndAddress(),
+    ]);
+    if (mounted) {
+      setState(() => _isInitialLoading = false);
+    }
+  }
+
+  Future<void> _refreshData() async {
+    await _getLocationAndAddress();
   }
 
   @override
@@ -75,13 +146,18 @@ class _DashboardScreenState extends State<DashboardScreen>
     super.dispose();
   }
 
+  Future<void> _loadAppInfo() async {
+    final details = await AppInfo.getAppDetails();
+    if (mounted) {
+      setState(() => _info = details);
+    }
+  }
+
   void _setCurrentDate() {
     final now = DateTime.now();
-    final months = [
-      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
-    ];
-    final days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
     setState(() {
       _currentDate = "${days[now.weekday % 7]}, ${now.day} ${months[now.month - 1]} ${now.year}";
@@ -89,19 +165,21 @@ class _DashboardScreenState extends State<DashboardScreen>
   }
 
   Future<void> _initDeviceInfo() async {
-    _deviceModel = await DeviceInfo.model();
-    _deviceOS = await DeviceInfo.os();
-    setState(() {});
+    final model = await DeviceInfo.model();
+    final os = await DeviceInfo.os();
+    if (mounted) {
+      setState(() {
+        _deviceModel = model;
+        _deviceOS = os;
+      });
+    }
   }
 
   Future<void> _getLocationAndAddress() async {
-    setState(() => _isLoading = true);
     try {
-      LatLng? current = await _locationService.getCurrentLocation();
+      final current = await _locationService.getCurrentLocation();
       if (current == null) {
-        setState(() {
-          _address = "Unable to get location";
-        });
+        setState(() => _address = "Unable to get location");
         return;
       }
 
@@ -109,83 +187,19 @@ class _DashboardScreenState extends State<DashboardScreen>
       final location = await _geocodingService.reverseGeocode(
           current.latitude, current.longitude);
 
-      setState(() {
-        _address = location.address ?? "Unknown location";
-        _deviceLocation = "${current.latitude.toStringAsFixed(4)}, ${current.longitude.toStringAsFixed(4)}";
-      });
+      if (mounted) {
+        setState(() {
+          _address = location.address ?? "Unknown location";
+          _deviceLocation = "${current.latitude.toStringAsFixed(4)}, ${current.longitude.toStringAsFixed(4)}";
+        });
+      }
 
       await _loadTodayAttendance();
     } catch (e) {
-      setState(() {
-        _address = "Location error: $e";
-      });
-      print("Error: $e");
-    } finally {
-      setState(() => _isLoading = false);
-    }
-  }
-
-  // Convert decimal hours to hours and minutes format
-  String _formatWorkHours(double? decimalHours) {
-    if (decimalHours == null || decimalHours <= 0) return "0h 0m";
-
-    final hours = decimalHours.floor();
-    final minutes = ((decimalHours - hours) * 60).round();
-
-    if (hours > 0) {
-      return "${hours}h ${minutes}m";
-    } else {
-      return "${minutes}m";
-    }
-  }
-
-  // Convert minutes to hours and minutes format
-  String _formatLateTime(double? minutes) {
-    if (minutes == null || minutes <= 0) return "On time";
-
-    final hours = (minutes / 60).floor();
-    final remainingMinutes = (minutes % 60).round();
-
-    if (hours > 0) {
-      return "${hours}h ${remainingMinutes}m late";
-    } else {
-      return "${remainingMinutes}m late";
-    }
-  }
-
-  Future<void> _checkOut() async {
-    if (_currentLatLng == null || !_isCheckedIn) {
-      _showSnackBar("Cannot check out without checking in first", Colors.orange.shade300);
-      return;
-    }
-
-    setState(() => _isLoading = true);
-
-    try {
-      final response = await _attendanceService.checkOut(
-        latitude: _currentLatLng!.latitude,
-        longitude: _currentLatLng!.longitude,
-        address: _address,
-        deviceInfo: "${_deviceOS ?? ''} | ${_deviceModel ?? ''}",
-      );
-
-      if (response['success'] == true) {
-        setState(() {
-          _isCheckedOut = true;
-          _checkOutTime = response['checkOutTimeFormatted'] ?? response['attendance']['checkOut']['time'];
-          _statusMessage = response['message'];
-          _currentWorkHours = response['currentWorkHours']?.toDouble() ??
-              response['attendance']['workHours']?.toDouble();
-        });
-
-        _showSnackBar("✅ ${_statusMessage ?? 'Checked out successfully'}", Colors.green.shade300);
-        _animationController.reset();
-        _animationController.forward();
+      if (mounted) {
+        setState(() => _address = "Location error: $e");
       }
-    } catch (e) {
-      _showSnackBar("❌ Check-out failed: $e", Colors.red.shade300);
-    } finally {
-      setState(() => _isLoading = false);
+      debugPrint("Error: $e");
     }
   }
 
@@ -193,28 +207,24 @@ class _DashboardScreenState extends State<DashboardScreen>
     try {
       final response = await _attendanceService.fetchTodayAttendance();
 
-      if (response['success'] == true) {
+      if (response['success'] == true && mounted) {
+        final attendance = response['attendance'];
         setState(() {
           _isCheckedIn = response['isCheckedIn'] ?? false;
           _isCheckedOut = response['isCheckedOut'] ?? false;
 
-          final attendance = response['attendance'];
           if (attendance != null) {
-            // Use the formatted times from the new API response
             _checkInTime = response['checkInTimeFormatted'] ?? attendance['checkInTimeFormatted'];
             _checkOutTime = response['checkOutTimeFormatted'] ?? attendance['checkOutTimeFormatted'];
-
-            // Use currentWorkHours from the new API response
             _currentWorkHours = response['currentWorkHours']?.toDouble() ??
                 attendance['workHours']?.toDouble() ?? 0.0;
-
             _latenessMinutes = attendance['lateBy']?.toDouble();
             _statusMessage = attendance['status'] ?? 'Present';
           }
         });
       }
     } catch (e) {
-      print("Error fetching attendance: $e");
+      debugPrint("Error fetching attendance: $e");
     }
   }
 
@@ -224,7 +234,7 @@ class _DashboardScreenState extends State<DashboardScreen>
       return;
     }
 
-    setState(() => _isLoading = true);
+    setState(() => _isAttendanceLoading = true);
 
     try {
       final response = await _attendanceService.checkIn(
@@ -234,187 +244,324 @@ class _DashboardScreenState extends State<DashboardScreen>
         deviceInfo: "${_deviceOS ?? ''} | ${_deviceModel ?? ''}",
       );
 
-      if (response['success'] == true) {
+      if (response['success'] == true && mounted) {
         setState(() {
           _isCheckedIn = true;
           _checkInTime = response['checkInTimeFormatted'] ?? response['attendance']['checkInTimeFormatted'];
           _statusMessage = response['message'];
           _latenessMinutes = response['lateBy']?.toDouble();
-          _currentWorkHours = 0.0; // Start with 0 work hours
+          _currentWorkHours = 0.0;
         });
 
         _showSnackBar("✅ ${_statusMessage ?? 'Checked in successfully'}", Colors.green.shade300);
-        _animationController.reset();
-        _animationController.forward();
       }
     } catch (e) {
       _showSnackBar("❌ Check-in failed: $e", Colors.red.shade300);
     } finally {
-      setState(() => _isLoading = false);
+      if (mounted) {
+        setState(() => _isAttendanceLoading = false);
+      }
+    }
+  }
+
+  Future<void> _checkOut() async {
+    if (_currentLatLng == null || !_isCheckedIn) {
+      _showSnackBar("Cannot check out without checking in first", Colors.orange.shade300);
+      return;
+    }
+
+    setState(() => _isAttendanceLoading = true);
+
+    try {
+      final response = await _attendanceService.checkOut(
+        latitude: _currentLatLng!.latitude,
+        longitude: _currentLatLng!.longitude,
+        address: _address,
+        deviceInfo: "${_deviceOS ?? ''} | ${_deviceModel ?? ''}",
+      );
+
+      if (response['success'] == true && mounted) {
+        setState(() {
+          _isCheckedOut = true;
+          _checkOutTime = response['checkOutTimeFormatted'] ?? response['attendance']['checkOut']['time'];
+          _statusMessage = response['message'];
+          _currentWorkHours = response['currentWorkHours']?.toDouble() ??
+              response['attendance']['workHours']?.toDouble();
+        });
+
+        _showSnackBar("✅ ${_statusMessage ?? 'Checked out successfully'}", Colors.green.shade300);
+      }
+    } catch (e) {
+      _showSnackBar("❌ Check-out failed: $e", Colors.red.shade300);
+    } finally {
+      if (mounted) {
+        setState(() => _isAttendanceLoading = false);
+      }
     }
   }
 
   void _showSnackBar(String message, Color color) {
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(message, style: TextStyle(fontWeight: FontWeight.w500, color: Colors.white)),
+        content: Text(message, style: const TextStyle(fontWeight: FontWeight.w500, color: Colors.white)),
         backgroundColor: color,
-        duration: Duration(seconds: 3),
+        duration: const Duration(seconds: 3),
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        margin: EdgeInsets.all(16),
+        margin: const EdgeInsets.all(16),
       ),
     );
   }
-// Add this new navigation method
-  void _navigateToHoliday() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (context) => PremiumHolidayCalendar()),
-    );
+
+  void _navigateTo(AppScreen screen) {
+    final targetScreen = _screenMap[screen];
+    if (targetScreen != null) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (context) => targetScreen),
+      );
+    }
   }
 
-  void _navigateToReport() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (context) => ReportScreen()),
-    );
+  final Map<AppScreen, Widget> _screenMap = {
+    AppScreen.report: ReportScreen(),
+    AppScreen.tasks: AwardScreen(),
+    AppScreen.leaves: LeavesScreen(),
+    AppScreen.payroll: PayrollScreen(),
+    AppScreen.holiday: PremiumHolidayCalendar(),
+    AppScreen.polls: PollScreen(),
+    AppScreen.support: SupportScreen(),
+    AppScreen.announcement: AnnouncementsPage(),
+    AppScreen.feedback: FeedbackScreen(),
+    AppScreen.combooff: ComboOffScreen(),
+  };
+
+  String _getStatusTitle() {
+    if (_isCheckedOut) return "Session Complete";
+    if (_isCheckedIn) {
+      return (_latenessMinutes != null && _latenessMinutes! > 0)
+          ? "Active Session (Late)"
+          : "Active Session";
+    }
+    return "Ready to Check In";
   }
 
-  void _navigateToSupport() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (context) => SupportScreen()),
-    );
+  String _formatTime(String isoString) {
+    try {
+      final dateTime = DateTime.parse(isoString).toUtc().add(const Duration(hours: 5, minutes: 30));
+      final hour = dateTime.hour > 12 ? dateTime.hour - 12 : dateTime.hour;
+      final period = dateTime.hour >= 12 ? 'PM' : 'AM';
+      final displayHour = hour == 0 ? 12 : hour;
+      return "${displayHour.toString().padLeft(2, '0')}:${dateTime.minute.toString().padLeft(2, '0')} $period";
+    } catch (e) {
+      return isoString;
+    }
   }
 
-  void _navigateToAnnouncement() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (context) => AnnouncementsPage()),
-    );
-  }
+  Future<void> _handleLogout() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: Colors.white,
+        surfaceTintColor: Colors.white,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+        ),
+        elevation: 8,
+        shadowColor: Colors.black.withOpacity(0.2),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Icon with gradient
+            Container(
+              width: 80,
+              height: 80,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [Colors.red.shade400, Colors.orange.shade400],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                Icons.logout_rounded,
+                color: Colors.white,
+                size: 40,
+              ),
+            ),
+            const SizedBox(height: 20),
 
-  void _navigateToPolls() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (context) => PollScreen()),
-    );
-  }
+            // Title
+            Text(
+              'Logout?',
+              style: TextStyle(
+                fontSize: 22,
+                fontWeight: FontWeight.w700,
+                color: Colors.grey.shade800,
+              ),
+            ),
+            const SizedBox(height: 12),
 
-  void _navigateToTasks() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (context) => TasksScreen()),
-    );
-  }
+            // Description
+            Text(
+              'Are you sure you want to logout from your account?',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 15,
+                color: Colors.grey.shade600,
+                height: 1.4,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          // Buttons Row
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: Row(
+              children: [
+                // Cancel Button
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.pop(context, false),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.grey.shade700,
+                      side: BorderSide(color: Colors.grey.shade300),
+                      backgroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: const Text(
+                      'Cancel',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w600,
+                        fontSize: 15,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
 
-  void _navigateToLeaves() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (context) => LeavesScreen()),
+                // Logout Button
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: () => Navigator.pop(context, true),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.red.shade500,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      elevation: 2,
+                      shadowColor: Colors.red.shade200,
+                    ),
+                    child: const Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.logout, size: 18),
+                        SizedBox(width: 6),
+                        Text(
+                          'Logout',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w600,
+                            fontSize: 15,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
-  }
 
-  void _navigateToPayroll() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (context) => PayrollScreen()),
-    );
-  }
-
-  void _navigateToFeedback() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (context) => FeedbackScreen()),
-    );
+    if (confirmed ?? false) {
+      await AuthService().logout();
+      Navigator.pushNamedAndRemoveUntil(
+        context,
+        '/login',
+            (Route<dynamic> route) => false,
+      );
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.grey[50], // Light background
-      appBar: PreferredSize(
-        preferredSize: Size.fromHeight(60),
-        child: TopBar(
-          address: _address,
-        ),
+      backgroundColor: Colors.grey[50],
+      drawer: Sidebar(
+        userName: _currentUser?.fullName ?? 'Loading...',
+        userEmail: _currentUser?.email ?? 'Loading...',
+        employeeId: _currentUser?.employeeId ?? '---',  // <-- add this
+        avatarFile: _currentAvatar,               // <-- unified source
+        onLogout: _handleLogout,
+        parentContext: context, // ✅ Pass the parent context         // <-- same navigation
       ),
-
+      appBar: PreferredSize(
+        preferredSize: const Size.fromHeight(60),
+        child: TopBar(address: _address),
+      ),
       body: RefreshIndicator(
-        onRefresh: _getLocationAndAddress,
-        color: Colors.blue.shade300,
-        child: ListView(
-          padding: EdgeInsets.only(bottom: 20),
-          children: [
-            AnimatedBuilder(
-              animation: _animationController,
-              builder: (context, child) {
-                return Transform.translate(
-                  offset: Offset(0, _slideAnimation.value),
-                  child: FadeTransition(
-                    opacity: _fadeAnimation,
-                    child: Column(
-                      children: [
-                        DayTimeWidget(),
-                        // Enhanced Feature Cards Row with Light Colors
-                        Container(
-                          margin: EdgeInsets.all(10),
-                          child: LayoutBuilder(
-                            builder: (context, constraints) {
-                              int crossAxisCount = constraints.maxWidth > 600 ? 4 : 3;
-                              return GridView.count(
-                                crossAxisCount: crossAxisCount,
-                                crossAxisSpacing: 12,
-                                mainAxisSpacing: 12,
-                                shrinkWrap: true,
-                                physics: NeverScrollableScrollPhysics(),
-                                children: [
-                                  _buildSmallFeatureCard("Reports", Icons.analytics_rounded,
-                                      [Colors.blue.shade200, Colors.blue.shade100], Colors.blue.shade600, _navigateToReport),
-                                  _buildSmallFeatureCard("Tasks", Icons.task_alt_rounded,
-                                      [Colors.red.shade200, Colors.red.shade100], Colors.red.shade600, _navigateToTasks),
-                                  _buildSmallFeatureCard("Leaves", Icons.event_available_rounded,
-                                      [Colors.green.shade200, Colors.green.shade100], Colors.green.shade600, _navigateToLeaves),
-                                  _buildSmallFeatureCard("Payroll", Icons.account_balance_wallet_rounded,
-                                      [Colors.purple.shade200, Colors.purple.shade100], Colors.purple.shade600, _navigateToPayroll),
-                                  _buildSmallFeatureCard("Holiday", Icons.event_rounded,
-                                      [Colors.teal.shade200, Colors.teal.shade100], Colors.teal.shade600, _navigateToHoliday),
-                                  _buildSmallFeatureCard("Polls", Icons.poll_rounded,
-                                      [Colors.indigo.shade200, Colors.indigo.shade100], Colors.indigo.shade600, _navigateToPolls),
-                                  _buildSmallFeatureCard("Support", Icons.support_agent,
-                                      [Colors.orange.shade200, Colors.orange.shade100], Colors.orange.shade600, _navigateToSupport),
-                                  _buildSmallFeatureCard("Announcement", Icons.campaign_rounded,
-                                      [Colors.pink.shade200, Colors.pink.shade100], Colors.pink.shade600, _navigateToAnnouncement),
-                                  _buildSmallFeatureCard("Feedback", Icons.feedback_rounded,
-                                      [Colors.amber.shade200, Colors.amber.shade100], Colors.amber.shade700, _navigateToFeedback,),
-                                ],
-                              );
-                            },
+        onRefresh: _refreshData,
+        child: Skeletonizer(
+          enabled: _isInitialLoading,
+          child: ListView(
+            padding: const EdgeInsets.only(bottom: 20),
+            physics: const AlwaysScrollableScrollPhysics(),
+            children: [
+              AnimatedBuilder(
+                animation: _animationController,
+                builder: (context, child) {
+                  return Transform.translate(
+                    offset: Offset(0, _slideAnimation.value),
+                    child: FadeTransition(
+                      opacity: _fadeAnimation,
+                      child: Column(
+                        children: [
+                          DayTimeWidget(),
+                          _buildFeatureGrid(),
+                          AnnouncementsHomeWidget(),
+                          AttendanceSummaryCard(
+                            statusTitle: _getStatusTitle(),
+                            currentDate: _currentDate,
+                            checkInTime: _checkInTime != null ? _formatTime(_checkInTime!) : null,
+                            checkOutTime: _checkOutTime != null ? _formatTime(_checkOutTime!) : null,
+                            currentWorkHours: _currentWorkHours,
+                            latenessMinutes: _latenessMinutes,
+                            statusMessage: _statusMessage,
+                            deviceModel: _deviceModel,
+                            deviceOS: _deviceOS,
+                            deviceLocation: _deviceLocation,
+                            isCheckedIn: _isCheckedIn,
+                            isCheckedOut: _isCheckedOut,
+                            isLoading: _isAttendanceLoading,
+                            onCheckIn: _checkIn,
+                            onCheckOut: _checkOut,
                           ),
-                        ),
-                        // Enhanced Attendance Status Card with Light Colors
-                        _buildEnhancedAttendanceCard(),
-                        SizedBox(height: 20),
-                        // Festivals Card with Light Colors
-                        Card(
-                          margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                          elevation: 4,
-                          shadowColor: Colors.purple.shade100,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(20),
-                          ),
-                          child: Container(
+                          Container(
+                            margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                             decoration: BoxDecoration(
                               borderRadius: BorderRadius.circular(20),
                               gradient: LinearGradient(
-                                colors: [Colors.white, Colors.purple.shade50],
+                                colors: [Colors.white, Colors.teal.shade50],
                                 begin: Alignment.topLeft,
                                 end: Alignment.bottomRight,
                               ),
+                              border: Border.all(
+                                color: Colors.teal.shade200,
+                                width: 1,
+                              ),
                             ),
                             child: Padding(
-                              padding: const EdgeInsets.all(24),
+                              padding: const EdgeInsets.all(16),
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
@@ -424,20 +571,20 @@ class _DashboardScreenState extends State<DashboardScreen>
                                         padding: const EdgeInsets.all(12),
                                         decoration: BoxDecoration(
                                           gradient: LinearGradient(
-                                            colors: [Colors.purple.shade200, Colors.purple.shade100],
+                                            colors: [Colors.teal.shade200, Colors.teal.shade100],
                                           ),
                                           borderRadius: BorderRadius.circular(12),
                                           boxShadow: [
                                             BoxShadow(
-                                              color: Colors.purple.shade100,
+                                              color: Colors.teal.shade100,
                                               blurRadius: 8,
-                                              offset: Offset(0, 4),
+                                              offset: const Offset(0, 4),
                                             ),
                                           ],
                                         ),
                                         child: Icon(
                                           Icons.celebration_rounded,
-                                          color: Colors.purple.shade600,
+                                          color: Colors.teal.shade600,
                                           size: 24,
                                         ),
                                       ),
@@ -448,600 +595,123 @@ class _DashboardScreenState extends State<DashboardScreen>
                                           style: TextStyle(
                                             fontSize: 20,
                                             fontWeight: FontWeight.bold,
-                                            color: Colors.purple.shade600,
+                                            color: Colors.teal.shade600,
                                           ),
                                         ),
                                       ),
                                     ],
                                   ),
-                                  const SizedBox(height: 20),
+                                  const SizedBox(height: 10),
                                   const UpcomingFestivals(),
                                 ],
                               ),
                             ),
                           ),
-                        ),
-                        SizedBox(height: 20),
-                        CelebrationWidget(
-                          showHeader: true,
-                          showViewAllButton: true,
-                          onViewAllPressed: () {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(builder: (context) => CelebrationScreen()),
-                            );
-                          },
-                        )
-                      ],
+                          CelebrationWidget(
+                            showHeader: true,
+                            showViewAllButton: true,
+                            onViewAllPressed: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(builder: (context) => CelebrationScreen()),
+                              );
+                            },
+                          ),
+                          if (_info != null) _buildAppInfo(),
+                        ],
+                      ),
                     ),
-                  ),
-                );
-              },
-            ),
-          ],
+                  );
+                },
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 
-  Widget _buildSmallFeatureCard(String title, IconData icon, List<Color> gradientColors, Color iconColor, VoidCallback onTap) {
+  Widget _buildFeatureGrid() {
     return Container(
-      width: 80, // Fixed width for small cards
-      margin: EdgeInsets.symmetric(horizontal: 4),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: gradientColors,
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: gradientColors.first.withOpacity(0.3),
-            blurRadius: 8,
-            offset: Offset(0, 4),
-            spreadRadius: 1,
-          ),
-        ],
-      ),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(16),
-          onTap: onTap,
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
+      margin: const EdgeInsets.all(10),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          int crossAxisCount = constraints.maxWidth > 600 ? 4 : 3;
+          return GridView.count(
+            crossAxisCount: crossAxisCount,
+            crossAxisSpacing: 12,
+            mainAxisSpacing: 12,
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
             children: [
-              Container(
-                padding: EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.9),
-                  borderRadius: BorderRadius.circular(12),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.1),
-                      blurRadius: 4,
-                      offset: Offset(0, 2),
-                    ),
-                  ],
-                ),
-                child: Icon(icon, color: iconColor, size: 24),
-              ),
-              SizedBox(height: 8),
-              Text(
-                title,
-                style: TextStyle(
-                  color: iconColor,
-                  fontWeight: FontWeight.w600,
-                  fontSize: 12,
-                ),
-                textAlign: TextAlign.center,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
+              _buildFeatureCard("Reports", Icons.analytics_rounded,
+                  [Colors.blue.shade200, Colors.blue.shade100], Colors.blue.shade600, AppScreen.report),
+              _buildFeatureCard("Tasks", Icons.task_alt_rounded,
+                  [Colors.red.shade200, Colors.red.shade100], Colors.red.shade600, AppScreen.tasks),
+              _buildFeatureCard("Leaves", Icons.event_available_rounded,
+                  [Colors.green.shade200, Colors.green.shade100], Colors.green.shade600, AppScreen.leaves),
+              _buildFeatureCard("Payroll", Icons.account_balance_wallet_rounded,
+                  [Colors.purple.shade200, Colors.purple.shade100], Colors.purple.shade600, AppScreen.payroll),
+              _buildFeatureCard("Holiday", Icons.event_rounded,
+                  [Colors.teal.shade200, Colors.teal.shade100], Colors.teal.shade600, AppScreen.holiday),
+              _buildFeatureCard("Polls", Icons.poll_rounded,
+                  [Colors.indigo.shade200, Colors.indigo.shade100], Colors.indigo.shade600, AppScreen.polls),
+              _buildFeatureCard("Support", Icons.support_agent,
+                  [Colors.orange.shade200, Colors.orange.shade100], Colors.orange.shade600, AppScreen.support),
+              _buildFeatureCard("Announcement", Icons.campaign_rounded,
+                  [Colors.pink.shade200, Colors.pink.shade100], Colors.pink.shade600, AppScreen.announcement),
+              _buildFeatureCard("Feedback", Icons.feedback_rounded,
+                  [Colors.amber.shade200, Colors.amber.shade100], Colors.amber.shade700, AppScreen.feedback),
+              _buildFeatureCard("Combooff", Icons.compare_arrows,
+                  [Colors.grey.shade200, Colors.grey.shade100], Colors.grey.shade700, AppScreen.combooff),
             ],
-          ),
-        ),
+          );
+        },
       ),
     );
   }
 
-  Widget _buildFeatureCard(String title, IconData icon, List<Color> gradientColors, Color iconColor, VoidCallback onTap) {
-    return Expanded(
-      child: AspectRatio(
-        aspectRatio: 1.1,
-        child: Container(
-          margin: EdgeInsets.all(4),
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: gradientColors,
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
-            borderRadius: BorderRadius.circular(20),
-            boxShadow: [
-              BoxShadow(
-                color: gradientColors.first.withOpacity(0.3),
-                blurRadius: 12,
-                offset: Offset(0, 6),
-                spreadRadius: 1,
-              ),
-            ],
-          ),
-          child: Material(
-            color: Colors.transparent,
-            child: InkWell(
-              borderRadius: BorderRadius.circular(20),
-              onTap: onTap,
-              child: Container(
-                padding: EdgeInsets.all(20),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Container(
-                      padding: EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.8),
-                        borderRadius: BorderRadius.circular(16),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.1),
-                            blurRadius: 4,
-                            offset: Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      child: Icon(icon, color: iconColor, size: 32),
-                    ),
-                    SizedBox(height: 16),
-                    Text(
-                      title,
-                      style: TextStyle(
-                        color: iconColor,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 16,
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
+  Widget _buildFeatureCard(
+      String title,
+      IconData icon,
+      List<Color> gradientColors,
+      Color iconColor,
+      AppScreen screen,
+      ) {
+    return BouncyFeatureCard(
+      title: title,
+      icon: icon,
+      gradientColors: gradientColors,
+      iconColor: iconColor,
+      onTap: () => _navigateTo(screen),
     );
   }
 
-  Widget _buildEnhancedAttendanceCard() {
-    return Container(
-      margin: EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(24),
-        gradient: LinearGradient(
-          colors: _getAttendanceGradientColors(),
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: _getAttendanceGradientColors().first.withOpacity(0.3),
-            blurRadius: 16,
-            offset: Offset(0, 8),
-            spreadRadius: 2,
-          ),
-        ],
-      ),
-      child: Container(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(24),
-          gradient: LinearGradient(
-            colors: [
-              Colors.white.withOpacity(0.2),
-              Colors.white.withOpacity(0.1),
-            ],
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-          ),
-        ),
-        child: Padding(
-          padding: EdgeInsets.all(24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Header Section
-              Row(
-                children: [
-                  Container(
-                    padding: EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.9),
-                      borderRadius: BorderRadius.circular(20),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.1),
-                          blurRadius: 8,
-                          offset: Offset(0, 4),
-                        ),
-                      ],
-                    ),
-                    child: Icon(
-                      _getStatusIcon(),
-                      color: _getStatusIconColor(),
-                      size: 36,
-                    ),
-                  ),
-                  SizedBox(width: 20),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          _getStatusTitle(),
-                          style: TextStyle(
-                            fontSize: 22,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white,
-                          ),
-                        ),
-                        SizedBox(height: 4),
-                        Text(
-                          _currentDate ?? "Today",
-                          style: TextStyle(
-                            fontSize: 14,
-                            color: Colors.white.withOpacity(0.9),
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-
-              SizedBox(height: 24),
-
-              // Status Information Section
-              Container(
-                padding: EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.9),
-                  borderRadius: BorderRadius.circular(16),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.05),
-                      blurRadius: 10,
-                      offset: Offset(0, 4),
-                    ),
-                  ],
-                ),
-                child: Column(
-                  children: [
-                    // Time Information
-                    if (_checkInTime != null || _checkOutTime != null) ...[
-                      Row(
-                        children: [
-                          Expanded(
-                            child: _buildTimeInfo(
-                              "Check-in",
-                              _checkInTime != null ? _formatTime(_checkInTime!) : "--:--",
-                              Icons.login_rounded,
-                              Colors.green.shade400,
-                            ),
-                          ),
-                          SizedBox(width: 16),
-                          Expanded(
-                            child: _buildTimeInfo(
-                              "Check-out",
-                              _checkOutTime != null ? _formatTime(_checkOutTime!) : "--:--",
-                              Icons.logout_rounded,
-                              Colors.red.shade400,
-                            ),
-                          ),
-                        ],
-                      ),
-                      SizedBox(height: 16),
-                    ],
-
-                    // Additional Information
-                    Row(
-                      children: [
-                        if (_currentWorkHours != null) ...[
-                          Expanded(
-                            child: _buildInfoChip(
-                              "Work Time",
-                              _formatWorkHours(_currentWorkHours),
-                              Icons.access_time_rounded,
-                              Colors.blue.shade400,
-                            ),
-                          ),
-                          SizedBox(width: 12),
-                        ],
-                        Expanded(
-                          child: _buildInfoChip(
-                            "Status",
-                            _latenessMinutes != null && _latenessMinutes! > 0
-                                ? _formatLateTime(_latenessMinutes)
-                                : (_statusMessage ?? "On time"),
-                            _latenessMinutes != null && _latenessMinutes! > 0
-                                ? Icons.warning_rounded
-                                : Icons.check_circle_rounded,
-                            _latenessMinutes != null && _latenessMinutes! > 0
-                                ? Colors.orange.shade400
-                                : Colors.green.shade400,
-                          ),
-                        ),
-                      ],
-                    ),
-
-                    // Device and Location Info
-                    if (_deviceModel != null || _deviceLocation != null) ...[
-                      SizedBox(height: 16),
-                      Row(
-                        children: [
-                          if (_deviceModel != null) ...[
-                            Expanded(
-                              child: _buildInfoChip(
-                                "Device",
-                                "${_deviceOS ?? ''} | ${_deviceModel ?? ''}",
-                                Icons.phone_android_rounded,
-                                Colors.purple.shade400,
-                              ),
-                            ),
-                          ],
-                          if (_deviceLocation != null) ...[
-                            SizedBox(width: 12),
-                            Expanded(
-                              child: _buildInfoChip(
-                                "Location",
-                                _deviceLocation!,
-                                Icons.location_on_rounded,
-                                Colors.teal.shade400,
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-
-              SizedBox(height: 24),
-
-              // Action Buttons
-              _buildActionButtons(),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTimeInfo(String label, String time, IconData icon, Color color) {
-    return Container(
-      padding: EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: color.withOpacity(0.3), width: 1),
-      ),
-      child: Column(
-        children: [
-          Icon(icon, color: color, size: 20),
-          SizedBox(height: 8),
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 12,
-              color: Colors.grey.shade600,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-          SizedBox(height: 4),
-          Text(
-            time,
-            style: TextStyle(
-              fontSize: 16,
-              color: Colors.grey.shade800,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildInfoChip(String label, String value, IconData icon, Color color) {
-    return Container(
-      padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: color.withOpacity(0.3),
-          width: 1,
-        ),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 16, color: color),
-          SizedBox(width: 6),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  label,
-                  style: TextStyle(
-                    fontSize: 10,
-                    color: Colors.grey.shade600,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                Text(
-                  value,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.grey.shade800,
-                    fontWeight: FontWeight.w600,
-                  ),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildActionButtons() {
-    if (_isLoading) {
-      return Center(
-        child: Container(
-          padding: EdgeInsets.all(20),
-          child: Column(
-            children: [
-              CircularProgressIndicator(
-                color: Colors.white,
-                strokeWidth: 3,
-              ),
-              SizedBox(height: 12),
-              Text(
-                "Processing...",
-                style: TextStyle(
-                  color: Colors.white.withOpacity(0.9),
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-
-    return Row(
+  Widget _buildAppInfo() {
+    return Column(
       children: [
-        Expanded(
-          child: _buildActionButton(
-            onPressed: _isCheckedIn ? null : _checkIn,
-            icon: Icons.login_rounded,
-            label: _isCheckedIn ? "Checked In" : "Check In",
-            isPrimary: true,
-            isEnabled: !_isCheckedIn,
+        const SizedBox(height: 10),
+        Text(
+          'Version ${_info!['version']} (${_info!['buildNumber']})',
+          style: const TextStyle(fontSize: 16, color: Colors.grey),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          _info!['copyright']!,
+          textAlign: TextAlign.center,
+          style: const TextStyle(fontSize: 13, color: Colors.grey),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          _info!['madeIn']!,
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            fontSize: 14,
+            color: Colors.redAccent,
+            fontWeight: FontWeight.w600,
           ),
         ),
-        if (_isCheckedIn && !_isCheckedOut) ...[
-          SizedBox(width: 16),
-          Expanded(
-            child: _buildActionButton(
-              onPressed: _checkOut,
-              icon: Icons.logout_rounded,
-              label: "Check Out",
-              isPrimary: false,
-              isEnabled: true,
-            ),
-          ),
-        ],
       ],
     );
-  }
-
-  Widget _buildActionButton({
-    required VoidCallback? onPressed,
-    required IconData icon,
-    required String label,
-    required bool isPrimary,
-    required bool isEnabled,
-  }) {
-    return Container(
-      height: 56,
-      child: ElevatedButton.icon(
-        onPressed: isEnabled ? onPressed : null,
-        icon: Icon(icon, size: 22),
-        label: Text(
-          label,
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-            fontSize: 16,
-          ),
-        ),
-        style: ElevatedButton.styleFrom(
-          backgroundColor: isPrimary
-              ? Colors.white
-              : Colors.red.shade300,
-          foregroundColor: isPrimary
-              ? _getAttendanceGradientColors().first
-              : Colors.white,
-          disabledBackgroundColor: Colors.white.withOpacity(0.5),
-          disabledForegroundColor: Colors.grey.shade400,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-          elevation: isPrimary ? 4 : 3,
-          shadowColor: isPrimary ? Colors.black12 : Colors.red.shade100,
-        ),
-      ),
-    );
-  }
-
-  List<Color> _getAttendanceGradientColors() {
-    if (_isCheckedOut) {
-      return [Colors.green.shade300, Colors.green.shade200]; // Light green for completed
-    }
-    if (_isCheckedIn) {
-      if (_latenessMinutes != null && _latenessMinutes! > 0) {
-        return [Colors.orange.shade300, Colors.orange.shade200]; // Light orange for late
-      }
-      return [Colors.blue.shade300, Colors.blue.shade200]; // Light blue for active
-    }
-    return [Colors.grey.shade300, Colors.grey.shade200]; // Light grey for inactive
-  }
-
-  Color _getStatusIconColor() {
-    if (_isCheckedOut) return Colors.green.shade600;
-    if (_isCheckedIn) {
-      if (_latenessMinutes != null && _latenessMinutes! > 0) {
-        return Colors.orange.shade600;
-      }
-      return Colors.blue.shade600;
-    }
-    return Colors.grey.shade600;
-  }
-
-  IconData _getStatusIcon() {
-    if (_isCheckedOut) return Icons.check_circle_rounded;
-    if (_isCheckedIn) {
-      if (_latenessMinutes != null && _latenessMinutes! > 0) {
-        return Icons.warning_rounded;
-      }
-      return Icons.timer_rounded;
-    }
-    return Icons.schedule_rounded;
-  }
-
-  String _getStatusTitle() {
-    if (_isCheckedOut) return "Session Complete";
-    if (_isCheckedIn) {
-      if (_latenessMinutes != null && _latenessMinutes! > 0) {
-        return "Active Session (Late)";
-      }
-      return "Active Session";
-    }
-    return "Ready to Check In";
-  }
-
-  String _formatTime(String isoString) {
-    try {
-      final dateTime = DateTime.parse(isoString);
-      final hour = dateTime.hour > 12 ? dateTime.hour - 12 : dateTime.hour;
-      final period = dateTime.hour >= 12 ? 'PM' : 'AM';
-      final displayHour = hour == 0 ? 12 : hour;
-      return "${displayHour.toString().padLeft(2, '0')}:${dateTime.minute.toString().padLeft(2, '0')} $period";
-    } catch (e) {
-      return isoString;
-    }
   }
 }

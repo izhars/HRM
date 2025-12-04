@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../app/constants.dart';
 import '../models/celebration.dart';
+import 'api_exception.dart';
 import 'auth_service.dart';
 
 class CelebrationService {
@@ -16,44 +17,49 @@ class CelebrationService {
     };
   }
 
+  /// -------------------------
+  /// 🔥 COMMON API HANDLER
+  /// -------------------------
+  dynamic _handleResponse(http.Response response) {
+    final body = json.decode(response.body);
+
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      return body;
+    }
+
+    throw ApiException(
+      statusCode: response.statusCode,
+      message: body['message'] ?? "Something went wrong",
+    );
+  }
+
+  /// 📅 TODAY CELEBRATIONS
   Future<CelebrationResponse> getTodayCelebrations({
     String? date,
     String? department,
     int page = 1,
     int limit = 10,
   }) async {
-    try {
-      final headers = await _getHeaders();
+    final headers = await _getHeaders();
 
-      // Build query parameters
-      final queryParams = <String, String>{};
-      if (date != null) queryParams['date'] = date;
-      if (department != null) queryParams['department'] = department;
-      queryParams['page'] = page.toString();
-      queryParams['limit'] = limit.toString();
+    final query = {
+      "page": page.toString(),
+      "limit": limit.toString(),
+      if (date != null) "date": date,
+      if (department != null) "department": department,
+    };
 
-      final uri = Uri.parse('$baseUrl/celebrations/all-today')
-          .replace(queryParameters: queryParams);
+    final uri = Uri.parse('$baseUrl/celebrations/all-today')
+        .replace(queryParameters: query);
 
-      final response = await http.get(uri, headers: headers);
+    final response = await http.get(uri, headers: headers);
 
-      if (response.statusCode == 200) {
-        final jsonData = json.decode(response.body);
-        return CelebrationResponse.fromJson(jsonData);
-      } else if (response.statusCode == 401) {
-        throw Exception('Unauthorized: Please login again');
-      } else if (response.statusCode == 404) {
-        throw Exception('Celebration endpoint not found');
-      } else {
-        final errorBody = json.decode(response.body);
-        throw Exception(errorBody['message'] ?? 'Failed to load today celebrations');
-      }
-    } catch (e) {
-      if (e is Exception) rethrow;
-      throw Exception('Error fetching today celebrations: $e');
-    }
+    final jsonData = _handleResponse(response);
+
+    return CelebrationResponse.fromJson(jsonData);
   }
 
+  /// 🔮 UPCOMING CELEBRATIONS
   Future<CelebrationResponse> getUpcomingCelebrations({
     String? date,
     String? department,
@@ -61,41 +67,25 @@ class CelebrationService {
     int page = 1,
     int limit = 10,
   }) async {
-    try {
-      final headers = await _getHeaders();
+    final headers = await _getHeaders();
 
-      // Build query parameters
-      final queryParams = <String, String>{
-        'upcomingDays': upcomingDays.toString(),
-        'page': page.toString(),
-        'limit': limit.toString(),
-      };
-      if (date != null) queryParams['date'] = date;
-      if (department != null) queryParams['department'] = department;
+    final query = {
+      "page": page.toString(),
+      "limit": limit.toString(),
+      "upcomingDays": upcomingDays.toString(),
+      if (date != null) "date": date,
+      if (department != null) "department": department,
+    };
 
-      final uri = Uri.parse('$baseUrl/celebrations/all-upcoming')
-          .replace(queryParameters: queryParams);
+    final uri = Uri.parse('$baseUrl/celebrations/all-upcoming')
+        .replace(queryParameters: query);
 
-      final response = await http.get(uri, headers: headers);
+    final response = await http.get(uri, headers: headers);
 
-      if (response.statusCode == 200) {
-        final jsonData = json.decode(response.body);
-        return CelebrationResponse.fromJson(jsonData);
-      } else if (response.statusCode == 401) {
-        throw Exception('Unauthorized: Please login again');
-      } else if (response.statusCode == 404) {
-        throw Exception('Celebration endpoint not found');
-      } else {
-        final errorBody = json.decode(response.body);
-        throw Exception(errorBody['message'] ?? 'Failed to load upcoming celebrations');
-      }
-    } catch (e) {
-      if (e is Exception) rethrow;
-      throw Exception('Error fetching upcoming celebrations: $e');
-    }
+    return CelebrationResponse.fromJson(_handleResponse(response));
   }
 
-  // Optional: Get specific celebration types
+  /// 🎂 BIRTHDAYS
   Future<CelebrationResponse> getBirthdays({
     String? date,
     String? department,
@@ -104,36 +94,28 @@ class CelebrationService {
     int page = 1,
     int limit = 10,
   }) async {
-    try {
-      final headers = await _getHeaders();
+    final headers = await _getHeaders();
 
-      final queryParams = <String, String>{
-        'page': page.toString(),
-        'limit': limit.toString(),
-      };
-      if (date != null) queryParams['date'] = date;
-      if (department != null) queryParams['department'] = department;
-      if (includeUpcoming) {
-        queryParams['includeUpcoming'] = 'true';
-        queryParams['upcomingDays'] = upcomingDays.toString();
+    final query = {
+      "page": page.toString(),
+      "limit": limit.toString(),
+      if (date != null) "date": date,
+      if (department != null) "department": department,
+      if (includeUpcoming) ...{
+        "includeUpcoming": "true",
+        "upcomingDays": upcomingDays.toString()
       }
+    };
 
-      final uri = Uri.parse('$baseUrl/celebrations/birthdays')
-          .replace(queryParameters: queryParams);
+    final uri = Uri.parse('$baseUrl/celebrations/birthdays')
+        .replace(queryParameters: query);
 
-      final response = await http.get(uri, headers: headers);
+    final response = await http.get(uri, headers: headers);
 
-      if (response.statusCode == 200) {
-        final jsonData = json.decode(response.body);
-        return CelebrationResponse.fromJson(jsonData);
-      } else {
-        throw Exception('Failed to load birthdays');
-      }
-    } catch (e) {
-      throw Exception('Error fetching birthdays: $e');
-    }
+    return CelebrationResponse.fromJson(_handleResponse(response));
   }
 
+  /// 💍 MARRIAGE ANNIVERSARY
   Future<CelebrationResponse> getMarriageAnniversaries({
     String? date,
     String? department,
@@ -142,36 +124,28 @@ class CelebrationService {
     int page = 1,
     int limit = 10,
   }) async {
-    try {
-      final headers = await _getHeaders();
+    final headers = await _getHeaders();
 
-      final queryParams = <String, String>{
-        'page': page.toString(),
-        'limit': limit.toString(),
-      };
-      if (date != null) queryParams['date'] = date;
-      if (department != null) queryParams['department'] = department;
-      if (includeUpcoming) {
-        queryParams['includeUpcoming'] = 'true';
-        queryParams['upcomingDays'] = upcomingDays.toString();
+    final query = {
+      "page": page.toString(),
+      "limit": limit.toString(),
+      if (date != null) "date": date,
+      if (department != null) "department": department,
+      if (includeUpcoming) ...{
+        "includeUpcoming": "true",
+        "upcomingDays": upcomingDays.toString()
       }
+    };
 
-      final uri = Uri.parse('$baseUrl/celebrations/marriage-anniversaries')
-          .replace(queryParameters: queryParams);
+    final uri = Uri.parse('$baseUrl/celebrations/marriage-anniversaries')
+        .replace(queryParameters: query);
 
-      final response = await http.get(uri, headers: headers);
+    final response = await http.get(uri, headers: headers);
 
-      if (response.statusCode == 200) {
-        final jsonData = json.decode(response.body);
-        return CelebrationResponse.fromJson(jsonData);
-      } else {
-        throw Exception('Failed to load marriage anniversaries');
-      }
-    } catch (e) {
-      throw Exception('Error fetching marriage anniversaries: $e');
-    }
+    return CelebrationResponse.fromJson(_handleResponse(response));
   }
 
+  /// 🏢 WORK ANNIVERSARY
   Future<CelebrationResponse> getWorkAnniversaries({
     String? date,
     String? department,
@@ -180,33 +154,24 @@ class CelebrationService {
     int page = 1,
     int limit = 10,
   }) async {
-    try {
-      final headers = await _getHeaders();
+    final headers = await _getHeaders();
 
-      final queryParams = <String, String>{
-        'page': page.toString(),
-        'limit': limit.toString(),
-      };
-      if (date != null) queryParams['date'] = date;
-      if (department != null) queryParams['department'] = department;
-      if (includeUpcoming) {
-        queryParams['includeUpcoming'] = 'true';
-        queryParams['upcomingDays'] = upcomingDays.toString();
+    final query = {
+      "page": page.toString(),
+      "limit": limit.toString(),
+      if (date != null) "date": date,
+      if (department != null) "department": department,
+      if (includeUpcoming) ...{
+        "includeUpcoming": "true",
+        "upcomingDays": upcomingDays.toString()
       }
+    };
 
-      final uri = Uri.parse('$baseUrl/celebrations/work-anniversaries')
-          .replace(queryParameters: queryParams);
+    final uri = Uri.parse('$baseUrl/celebrations/work-anniversaries')
+        .replace(queryParameters: query);
 
-      final response = await http.get(uri, headers: headers);
+    final response = await http.get(uri, headers: headers);
 
-      if (response.statusCode == 200) {
-        final jsonData = json.decode(response.body);
-        return CelebrationResponse.fromJson(jsonData);
-      } else {
-        throw Exception('Failed to load work anniversaries');
-      }
-    } catch (e) {
-      throw Exception('Error fetching work anniversaries: $e');
-    }
+    return CelebrationResponse.fromJson(_handleResponse(response));
   }
 }

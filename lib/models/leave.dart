@@ -72,8 +72,8 @@ class Leave {
       leaveType[0].toUpperCase() + leaveType.substring(1);
 
   String get formattedDateRange {
-    final start = DateFormat('MMM dd').format(startDate);
-    final end = DateFormat('MMM dd, yyyy').format(endDate);
+    final start = DateFormat('MMM dd').format(startDate.toLocal());
+    final end = DateFormat('MMM dd, yyyy').format(endDate.toLocal());
 
     if (leaveDuration == 'half') {
       final halfType = halfDayType == 'first_half' ? 'First Half' : 'Second Half';

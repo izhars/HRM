@@ -1,12 +1,11 @@
 // lib/screens/leaves_screen.dart
 import 'dart:convert';
-
+import 'package:dropdown_button2/dropdown_button2.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:intl/intl.dart';
 import '../models/leave.dart';
 import '../services/leave_api.dart';
-import '../services/auth_service.dart';
 
 class LeavesScreen extends StatefulWidget {
   @override
@@ -24,6 +23,7 @@ class _LeavesScreenState extends State<LeavesScreen>
   LeaveBalance? _leaveBalance;
   bool _isLoading = true;
   bool _isBalanceLoading = true;
+  bool _isLeavesLoading = false;
   final List<String> _tabs = ['All', 'Pending', 'Approved', 'Rejected'];
 
   @override
@@ -33,7 +33,9 @@ class _LeavesScreenState extends State<LeavesScreen>
     _tabController.addListener(() {
       if (!_tabController.indexIsChanging) {
         setState(() => _selectedTab = _tabController.index);
-        _fetchLeavesWithStatus(_tabController.index == 0 ? null : _tabs[_tabController.index].toLowerCase());
+        _fetchLeavesWithStatus(
+            _tabController.index == 0 ? null : _tabs[_tabController.index].toLowerCase()
+        );
       }
     });
     _loadUserRole();
@@ -100,7 +102,7 @@ class _LeavesScreenState extends State<LeavesScreen>
   }
 
   Future<void> _fetchLeaves() async {
-    setState(() => _isLoading = true);
+    setState(() => _isLeavesLoading = true); // Changed from _isLoading
     try {
       List<dynamic> leavesData;
       if (_userRole == 'employee') {
@@ -114,9 +116,10 @@ class _LeavesScreenState extends State<LeavesScreen>
     } catch (e) {
       _showSnackBar('Failed to load leaves: $e', isError: true);
     } finally {
-      setState(() => _isLoading = false);
+      setState(() => _isLeavesLoading = false); // Changed from _isLoading
     }
   }
+
 
   Future<void> _fetchLeaveBalance() async {
     if (_userRole != 'employee') return;
@@ -156,6 +159,7 @@ class _LeavesScreenState extends State<LeavesScreen>
           ? FloatingActionButton.extended(
         onPressed: _openApplyLeaveSheet,
         backgroundColor: Color(0xFF2E7D32),
+        foregroundColor: Colors.white, // <-- makes text & icon white
         icon: Icon(Icons.add),
         label: Text('Apply Leave'),
       )
@@ -297,19 +301,19 @@ class _LeavesScreenState extends State<LeavesScreen>
   }
 
   Future<void> _fetchLeavesWithStatus(String? status) async {
-    setState(() => _isLoading = true);
+    setState(() => _isLeavesLoading = true); // Changed from _isLoading
     try {
       final data = await _leaveService.getMyLeaves(status: status);
       setState(() => _leaves = data.map((j) => Leave.fromJson(j)).toList());
     } catch (e) {
       _showSnackBar('Error: $e', isError: true);
     } finally {
-      setState(() => _isLoading = false);
+      setState(() => _isLeavesLoading = false); // Changed from _isLoading
     }
   }
 
   Widget _buildLeavesList() {
-    if (_isLoading) {
+    if (_isLeavesLoading) { // Changed from _isLoading
       return SliverFillRemaining(child: _buildShimmerList());
     }
     if (_leaves.isEmpty) {
@@ -446,6 +450,48 @@ class _LeavesScreenState extends State<LeavesScreen>
       case 'rejected': return Colors.red;
       case 'cancelled': return Colors.grey;
       default: return Colors.orange;
+    }
+  }
+
+  Widget _getLeaveTypeIcon(String type) {
+    switch (type) {
+      case 'casual':
+        return Icon(Icons.beach_access, color: Colors.orange, size: 20);
+      case 'sick':
+        return Icon(Icons.local_hospital, color: Colors.red, size: 20);
+      case 'earned':
+        return Icon(Icons.card_giftcard, color: Colors.green, size: 20);
+      case 'combo':
+        return Icon(Icons.all_inclusive, color: Colors.purple, size: 20);
+      case 'unpaid':
+        return Icon(Icons.money_off, color: Colors.grey, size: 20);
+      case 'maternity':
+        return Icon(Icons.child_friendly, color: Colors.pink, size: 20);
+      case 'paternity':
+        return Icon(Icons.family_restroom, color: Colors.blue, size: 20);
+      default:
+        return Icon(Icons.category, color: Colors.grey, size: 20);
+    }
+  }
+
+  Color _getLeaveTypeColor(String type) {
+    switch (type) {
+      case 'casual':
+        return Colors.orange[700]!;
+      case 'sick':
+        return Colors.red[700]!;
+      case 'earned':
+        return Colors.green[700]!;
+      case 'combo':
+        return Colors.purple[700]!;
+      case 'unpaid':
+        return Colors.grey[700]!;
+      case 'maternity':
+        return Colors.pink[700]!;
+      case 'paternity':
+        return Colors.blue[700]!;
+      default:
+        return Colors.grey[800]!;
     }
   }
 
@@ -599,13 +645,15 @@ class _LeavesScreenState extends State<LeavesScreen>
     );
   }
 
+  // Replace your entire _openApplyLeaveSheet() method with this fixed version:
+
   void _openApplyLeaveSheet() {
     final _formKey = GlobalKey<FormState>();
-    String? _leaveType;
+    String? _leaveType; // This is correctly defined here
     DateTime? _startDate;
     DateTime? _endDate;
-    String _leaveDuration = 'full'; // NEW
-    String? _halfDayType; // NEW
+    String _leaveDuration = 'full';
+    String? _halfDayType;
     final TextEditingController reasonController = TextEditingController();
 
     showModalBottomSheet(
@@ -640,28 +688,94 @@ class _LeavesScreenState extends State<LeavesScreen>
                         Text('Apply for Leave', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
                         SizedBox(height: 24),
 
-                        // Leave Type Dropdown
-                        DropdownButtonFormField<String>(
-                          decoration: InputDecoration(
-                            labelText: 'Leave Type',
-                            prefixIcon: Icon(Icons.category),
-                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                            filled: true,
-                            fillColor: Colors.grey[50],
+                        // Leave Type Dropdown - FIXED VERSION
+                        Container(
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(12),
+                            color: Colors.grey[50],
+                            border: Border.all(color: Colors.grey[300]!),
                           ),
-                          items: ['casual', 'sick', 'earned', 'unpaid', 'maternity', 'paternity']
-                              .map((type) => DropdownMenuItem(
-                            value: type,
-                            child: Text(type[0].toUpperCase() + type.substring(1)),
-                          ))
-                              .toList(),
-                          onChanged: (val) => setModalState(() => _leaveType = val),
-                          validator: (val) => val == null ? 'Please select leave type' : null,
+                          child: DropdownButtonHideUnderline(
+                            child: DropdownButton2<String>(
+                              isExpanded: true,
+                              value: _leaveType, // NOW IT WILL WORK
+                              hint: Row(
+                                children: [
+                                  Icon(Icons.category, size: 20, color: Colors.grey[600]),
+                                  SizedBox(width: 12),
+                                  Text(
+                                    'Select Leave Type',
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      color: Colors.grey[600],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              items: ['casual', 'sick', 'earned', 'combo', 'unpaid', 'maternity', 'paternity']
+                                  .map((type) => DropdownMenuItem(
+                                value: type,
+                                child: Container(
+                                  padding: EdgeInsets.symmetric(vertical: 8),
+                                  child: Row(
+                                    children: [
+                                      Container(
+                                        width: 8,
+                                        height: 8,
+                                        decoration: BoxDecoration(
+                                          color: _getLeaveTypeColor(type),
+                                          shape: BoxShape.circle,
+                                        ),
+                                      ),
+                                      SizedBox(width: 12),
+                                      Text(
+                                        type[0].toUpperCase() + type.substring(1),
+                                        style: TextStyle(
+                                          fontSize: 15,
+                                          fontWeight: FontWeight.w500,
+                                          color: Colors.grey[800],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ))
+                                  .toList(),
+                              onChanged: (val) => setModalState(() => _leaveType = val),
+                              buttonStyleData: ButtonStyleData(
+                                height: 50,
+                                padding: EdgeInsets.only(left: 16, right: 12),
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(12),
+                                  color: Colors.grey[50],
+                                ),
+                              ),
+                              iconStyleData: IconStyleData(
+                                icon: Icon(Icons.arrow_drop_down),
+                                iconSize: 28,
+                                iconEnabledColor: Colors.grey[600],
+                              ),
+                              dropdownStyleData: DropdownStyleData(
+                                maxHeight: 300,
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(12),
+                                  color: Colors.white,
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.black12,
+                                      blurRadius: 8,
+                                      offset: Offset(0, 4),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
                         ),
 
                         SizedBox(height: 16),
 
-                        // NEW: Leave Duration Toggle
+                        // Leave Duration Toggle
                         Container(
                           padding: EdgeInsets.all(12),
                           decoration: BoxDecoration(
@@ -709,7 +823,7 @@ class _LeavesScreenState extends State<LeavesScreen>
                           ),
                         ),
 
-                        // NEW: Half Day Type (conditionally shown)
+                        // Half Day Type
                         if (_leaveDuration == 'half') ...[
                           SizedBox(height: 16),
                           DropdownButtonFormField<String>(
@@ -743,7 +857,6 @@ class _LeavesScreenState extends State<LeavesScreen>
                             if (picked != null) {
                               setModalState(() {
                                 _startDate = picked;
-                                // Auto-set end date same as start for half-day
                                 if (_leaveDuration == 'half') {
                                   _endDate = picked;
                                 }
@@ -765,7 +878,7 @@ class _LeavesScreenState extends State<LeavesScreen>
                           ),
                         ),
 
-                        // End Date (hidden for half-day)
+                        // End Date
                         if (_leaveDuration == 'full') ...[
                           SizedBox(height: 16),
                           InkWell(
@@ -819,12 +932,17 @@ class _LeavesScreenState extends State<LeavesScreen>
                           child: ElevatedButton.icon(
                             onPressed: () async {
                               if (_formKey.currentState!.validate()) {
+                                // Validate leave type
+                                if (_leaveType == null) {
+                                  _showSnackBar('Please select leave type', isError: true);
+                                  return;
+                                }
+
                                 if (_startDate == null) {
                                   _showSnackBar('Please select start date', isError: true);
                                   return;
                                 }
 
-                                // For half-day, end date should be same as start
                                 final effectiveEndDate = _leaveDuration == 'half' ? _startDate : _endDate;
 
                                 if (effectiveEndDate == null) {
@@ -840,10 +958,9 @@ class _LeavesScreenState extends State<LeavesScreen>
                                     "startDate": _startDate!.toIso8601String(),
                                     "endDate": effectiveEndDate!.toIso8601String(),
                                     "reason": reasonController.text,
-                                    "leaveDuration": _leaveDuration, // NEW
+                                    "leaveDuration": _leaveDuration,
                                   };
 
-                                  // Add halfDayType only if half-day is selected
                                   if (_leaveDuration == 'half' && _halfDayType != null) {
                                     leaveData["halfDayType"] = _halfDayType!;
                                   }

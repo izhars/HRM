@@ -1,98 +1,117 @@
-import 'dart:convert';
-import 'package:http/http.dart' as http;
-import '../app/constants.dart';
-import '../services/auth_service.dart';
+import '../services/network_service.dart';
+import 'api_exception.dart';
 
 class AttendanceService {
-  final String baseUrl = AppConstants.apiBaseUrl;
-  final AuthService _authService = AuthService();
+  final NetworkService _network = NetworkService();
 
-  /// **Check-in API**
+  // ---------------------------------------------------------
+  // 🔥 Check-In
+  // ---------------------------------------------------------
   Future<Map<String, dynamic>> checkIn({
     required double latitude,
     required double longitude,
     required String address,
     required String deviceInfo,
   }) async {
-    final token = await _authService.getToken();
-
-    final response = await http.post(
-      Uri.parse('$baseUrl/attendance/check-in'),
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer $token',
-      },
-      body: jsonEncode({
-        "latitude": latitude,
-        "longitude": longitude,
-        "address": address,
-        "deviceInfo": deviceInfo,
-      }),
-    );
-
-    final responseData = jsonDecode(response.body);
-    if (response.statusCode == 200 || response.statusCode == 201) {
-      return responseData;
-    } else {
-      throw Exception(responseData['message'] ?? 'Check-in failed');
+    try {
+      return await _network.post(
+        "/attendance/check-in",
+        {
+          "latitude": latitude,
+          "longitude": longitude,
+          "address": address,
+          "deviceInfo": deviceInfo,
+        },
+      );
+    } catch (e) {
+      if (e is ApiException) throw e;
+      rethrow;
     }
   }
 
-  /// **Check-out API** - NEW
+  // ---------------------------------------------------------
+  // 🔥 Check-Out
+  // ---------------------------------------------------------
   Future<Map<String, dynamic>> checkOut({
     required double latitude,
     required double longitude,
     required String address,
     required String deviceInfo,
   }) async {
-    final token = await _authService.getToken();
-
-    final response = await http.post(
-      Uri.parse('$baseUrl/attendance/check-out'),
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer $token',
-      },
-      body: jsonEncode({
-        "latitude": latitude,
-        "longitude": longitude,
-        "address": address,
-        "deviceInfo": deviceInfo,
-      }),
-    );
-
-    final responseData = jsonDecode(response.body);
-    if (response.statusCode == 200 || response.statusCode == 201) {
-      return responseData;
-    } else {
-      throw Exception(responseData['message'] ?? 'Check-out failed');
+    try {
+      return await _network.post(
+        "/attendance/check-out",
+        {
+          "latitude": latitude,
+          "longitude": longitude,
+          "address": address,
+          "deviceInfo": deviceInfo,
+        },
+      );
+    } catch (e) {
+      if (e is ApiException) throw e;
+      rethrow;
     }
   }
 
-  /// **Fetch Today's Attendance**
+  // ---------------------------------------------------------
+  // 🔥 Fetch Today's Attendance
+  // ---------------------------------------------------------
   Future<Map<String, dynamic>> fetchTodayAttendance() async {
-    final token = await _authService.getToken();
-
-    final response = await http.get(
-      Uri.parse('$baseUrl/attendance/today'),
-      headers: {'Authorization': 'Bearer $token'},
-    );
-
-    final responseData = jsonDecode(response.body);
-    if (response.statusCode == 200) {
-      return responseData;
-    } else {
-      throw Exception(responseData['message'] ?? 'Failed to fetch attendance');
+    try {
+      return await _network.get("/attendance/today");
+    } catch (e) {
+      if (e is ApiException) throw e;
+      rethrow;
     }
   }
 
-  /// **Get Work Hours** (Helper method)
+  // ---------------------------------------------------------
+  // 🔥 Fetch My Attendance (month/year filter)
+  // ---------------------------------------------------------
+  Future<Map<String, dynamic>> fetchMyAttendance({
+    int? month,
+    int? year,
+  }) async {
+    try {
+      String url = "/attendance/my-attendance";
+
+      if (month != null && year != null) {
+        url += "?month=$month&year=$year";
+      }
+
+      return await _network.get(url);
+    } catch (e) {
+      if (e is ApiException) throw e;
+      rethrow;
+    }
+  }
+
+  // ---------------------------------------------------------
+  // 🔥 Monthly Work Hours Chart
+  // ---------------------------------------------------------
+  Future<Map<String, dynamic>> getMonthlyWorkHours({
+    required int month,
+    required int year,
+  }) async {
+    try {
+      return await _network.get(
+        "/attendance/work-hours-chart-monthly?month=$month&year=$year",
+      );
+    } catch (e) {
+      if (e is ApiException) throw e;
+      rethrow;
+    }
+  }
+
+  // ---------------------------------------------------------
+  // 🔥 Work Hours Calculation Helper
+  // ---------------------------------------------------------
   double? getWorkHours(Map<String, dynamic> attendance) {
     if (attendance['workHours'] != null) {
       return attendance['workHours'].toDouble();
     }
 
-    // Calculate from checkIn/checkOut times if available
     final checkInTime = attendance['checkIn']?['time'];
     final checkOutTime = attendance['checkOut']?['time'];
 
@@ -101,7 +120,7 @@ class AttendanceService {
         final checkIn = DateTime.parse(checkInTime);
         final checkOut = DateTime.parse(checkOutTime);
         return checkOut.difference(checkIn).inMinutes / 60.0;
-      } catch (e) {
+      } catch (_) {
         return null;
       }
     }
@@ -109,38 +128,9 @@ class AttendanceService {
     return null;
   }
 
-  Future<Map<String, dynamic>?> fetchMyAttendance({int? month, int? year}) async {
-    try {
-      final token = await _authService
-          .getToken(); // replace with your auth token method
-      String url = '$baseUrl/attendance/my-attendance';
-
-      // Add query params if month & year are provided
-      if (month != null && year != null) {
-        url += '?month=$month&year=$year';
-      }
-
-      final response = await http.get(
-        Uri.parse(url),
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
-      );
-
-      if (response.statusCode == 200) {
-        return json.decode(response.body);
-      } else {
-        print('Error fetching attendance: ${response.body}');
-        return null;
-      }
-    } catch (e) {
-      print('Exception: $e');
-      return null;
-    }
-  }
-
-  /// **Format Work Hours**
+  // ---------------------------------------------------------
+  // 🔥 Format Work Hours
+  // ---------------------------------------------------------
   String formatWorkHours(double? hours) {
     if (hours == null) return "N/A";
 

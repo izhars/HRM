@@ -13,7 +13,7 @@ class User {
   final DateTime? dateOfJoining;
   final String? employmentType;
   final String status;
-  final String? reportingManager;
+  final ReportingManager? reportingManager;
   final String? gender;
   final DateTime? dateOfBirth;
   final String? maritalStatus;
@@ -98,7 +98,9 @@ class User {
       dateOfJoining: _tryParseDate(json['dateOfJoining']),
       employmentType: json['employmentType'],
       status: json['status'] ?? '',
-      reportingManager: json['reportingManager'],
+      reportingManager: json['reportingManager'] != null
+          ? ReportingManager.fromJson(json['reportingManager'])
+          : null,
       gender: json['gender'],
       dateOfBirth: _tryParseDate(json['dateOfBirth']),
       maritalStatus: json['maritalStatus'],
@@ -410,6 +412,51 @@ class LeaveBalance {
     };
   }
 }
+
+class ReportingManager {
+  final String id;
+  final String firstName;
+  final String lastName;
+  final String email;
+  final String profilePicture;
+  final String fullName;
+  final int? daysToAnniversary;
+
+  ReportingManager({
+    required this.id,
+    required this.firstName,
+    required this.lastName,
+    required this.email,
+    required this.profilePicture,
+    required this.fullName,
+    this.daysToAnniversary,
+  });
+
+  factory ReportingManager.fromJson(Map<String, dynamic> json) {
+    return ReportingManager(
+      id: json['_id'] ?? json['id'] ?? '',
+      firstName: json['firstName'] ?? '',
+      lastName: json['lastName'] ?? '',
+      email: json['email'] ?? '',
+      profilePicture: json['profilePicture'] ?? '',
+      fullName: json['fullName'] ?? '',
+      daysToAnniversary: json['daysToAnniversary'],
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      '_id': id,
+      'firstName': firstName,
+      'lastName': lastName,
+      'email': email,
+      'profilePicture': profilePicture,
+      'fullName': fullName,
+      'daysToAnniversary': daysToAnniversary,
+    };
+  }
+}
+
 
 class EmergencyContact {
   final String name;
